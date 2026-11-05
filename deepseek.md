@@ -1,6 +1,6 @@
 # Beizx的阅读器 · 产品文档
 
-> 版本：v1.4.1（锁屏媒体控制 · 后台播放 · 网关译文缓存 · 阅读流畅度）
+> 版本：v1.4.3（v1.4.2 功能不变 · 产出 Android 安装包）
 > 更新时间：2026-11-05
 > 平台：Android / iOS（Flutter）
 > 应用显示名称：Beizx的阅读器
@@ -59,17 +59,17 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 | 书架 | 导入、展示、删除 TXT / EPUB；封面网格、格式筛选、续读卡、书签数 | ✅ |
 | 文件解析 | TXT 编码识别与分章；EPUB 章节提取 | ✅ |
 | 试听书 | 系统 TTS、章节连续朗读、暂停 / 继续、上一句 / 下一句 / 上下章、倍速、音色、播完本章停止 / 定时停止、随读高亮 | ✅ |
-| 后台播放 | Android 媒体前台服务 + 通知栏控制；iOS `AVAudioSession` + 锁屏 / 控制中心 Now Playing；中断与拔耳机自动暂停 | ✅ |
+| 后台播放 | Android 媒体前台服务 + 通知栏控制；iOS `AVAudioSession` + 锁屏 / 控制中心 Now Playing；中断与拔耳机自动暂停；首次听书的后台 / 省电说明 | ✅ |
 | 外部打开 | 从 QQ / 微信 / 文件管理器的「用其他应用打开」接收 TXT / EPUB，导入本地书架 | ✅ |
 | 阅读性能 | 段落拆分缓存、正文 RepaintBoundary、内容子树缓存、朗读高亮按段落局部重建 | ✅ |
-| Go 后端 | Go 代理池与有道 v3 翻译网关，服务端签名、令牌鉴权、健康检查、译文缓存（TTL + LRU + 并发合并） | ✅ |
-| 阅读器 | 滚动 / 翻页两种模式、自动分页、点击 / 滑动翻页、沉浸工具栏、页码 | ✅ |
-| 阅读设置 | 背景 / 字体 / 字号 / 行距 / 段距 / 缩进 / 边距 / 指示器 / 常亮 / 隐藏状态栏 / 翻页动画 | ✅ |
+| Go 后端 | Go 代理池与有道 v3 翻译网关，服务端签名、令牌鉴权、健康检查、译文缓存（内存 TTL + LRU，并默认落到磁盘） | ✅ |
+| 阅读器 | 滚动 / 翻页两种模式、自动分页、点击 / 滑动翻页、可选音量键翻页、沉浸工具栏、页码 | ✅ |
+| 阅读设置 | 背景 / 系统字体（衬线、无衬线、等宽、窄黑体）/ 字号 / 行距 / 段距 / 缩进 / 边距 / 指示器 / 常亮 / 隐藏状态栏 / 翻页动画 / 音量键翻页 | ✅ |
 | 目录与书签 | 章节搜索、当前章节高亮、译文标记；书签添加 / 跳转 / 删除 | ✅ |
 | 阅读进度 | 章节内精确位置、全书百分比、累计阅读时长、书架续读 | ✅ |
 | 原文 / 译文 | 有译文时反转切换；按语言缓存到本地 | ✅ |
 | 语言 | 源语言：自动识别、中文、日语、韩语、英语；目标语言：中/日/韩/英 | ✅ |
-| 翻译 | 长文自动分段、顺序翻译、进度、取消、失败提示、重试 | ✅ |
+| 翻译 | 长文自动分段、顺序翻译、进度与预计剩余、取消后保留、断点续译、失败段单独重试 | ✅ |
 | 导出 | 译后 TXT、译后 EPUB，通过系统分享面板保存/发送 | ✅ |
 | 多语去重 | 识别相邻日中英韩对照段落，按用户选择保留语言并生成去重版 | ✅ |
 | 去重文件 | 去重完成后直接导出 TXT / EPUB 文件并调起系统分享 | ✅ |
@@ -88,14 +88,14 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 后台翻译任务/锁屏继续翻译（翻译仍由当前页面任务管理；听书支持系统 TTS 继续播放）。
 - 自定义提示词、大模型翻译（架构可扩展，但本期不接入）。
 - 基于 AI 语义相似度的自动去重判定（v1.1 使用本地结构启发式 + 用户逐组确认；不承诺语义完全等价）。
-- 翻页模式下的自定义字体文件、背景图片、音量键翻页（需要额外的平台插件与文件权限；v1.3 先交付核心排版与手势）。
+- 翻页模式下的自定义字体文件与背景图片。v1.4.2 只提供系统字体（衬线 / 无衬线 / 等宽 / 窄黑体）和可选的音量键翻页；不从文件加载字体，避免正文丢字。
 
 ### 2.3 未来可扩展方向
 
 - 正版网络书源、全文检索与云端高质量语音合成（当前用系统 TTS）。
 - 接入百度翻译、DeepL、Google Cloud Translation、腾讯云翻译。
 - 中英对照双语导出、术语表、译文润色。
-- 分章购译/批量任务队列、断点续译。
+- 分章购译 / 批量任务队列（断点续译已在 v1.4.2 落地）。
 - 多语去重的语义校验、同语言重复检测与规则自定义。
 - iPad 分栏阅读、跨设备进度同步。
 - 听书的跨设备播放接力与云端高品质语音合成。
@@ -121,8 +121,8 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 3. 若接口未配置，提示「先配置翻译接口」，跳转「设置 → 翻译接口」。
 4. 在「设置 → 翻译接口」填写有道智云 App ID / App Secret，点击「测试连接」，成功后保存。
 5. 返回书籍详情，点击「开始翻译」。
-6. 页面展示分段进度、当前章节；可取消。
-7. 完成后点击「阅读译文」进入同一阅读器，或导出 TXT / EPUB。
+6. 页面展示分段进度、剩余段数、失败段数和预计剩余时间；可取消。取消后已成功的段落会留下来。
+7. 未完成时可以「继续翻译」，或只「重试失败段」。已译完的章节可以先读。整本完成后才能导出 TXT / EPUB。
 
 ### 3.3 翻译任务流程
 
@@ -131,7 +131,9 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
         → 选择语言 → 检查接口配置
         → 文本分块（按段落聚合，单块 ≤ 1800 字符）
         → 逐块调用翻译 API（串行 + 间隔，避免触发免费额度限频）
-        → 按章节重组译文 → 保存 TranslationRecord
+        → 每块成功或失败都写入草稿（同一 bookId + 目标语言）
+        → 取消或失败块不影响已成功的块；下次从剩下的块继续
+        → 全部成功后按章节重组译文 → 保存 TranslationRecord 并删除草稿
         → 双语阅读 / 导出
 ```
 
@@ -197,8 +199,8 @@ QQ / 微信 / 文件管理器 → 「用其他应用打开」→ Beizx的阅读�
 
 - **接口未配置**：禁止开始翻译，显示跳转按钮。
 - **签名错误 / App ID 无效**：展示可读中文错误，指引检查配置。
-- **请求频率受限**：自动退避重试 2 次；仍失败则中止并保留原书，用户可重新发起。
-- **取消翻译**：立即中止后续请求；已完成的整书结果不落盘，避免留下半成品。
+- **请求频率受限**：单块自动退避重试 2 次；仍失败则记下这一块，继续后面的块。成功的段落保留，详情页可以「重试失败段」。
+- **取消翻译**：立即停止后续请求；已经成功的块写入草稿，详情页可以「继续翻译」。上一版完整译文在新任务完成前不会被半成品覆盖。
 - **文件损坏**：提示无法解析，不影响已有书库。
 - **超长文件**：解析后正常入库存放；翻译任务按块推进。
 - **无去重候选**：提示没有找到相邻的其他语言段落，可切换保留语言再分析。
@@ -304,12 +306,13 @@ QQ / 微信 / 文件管理器 → 「用其他应用打开」→ Beizx的阅读�
 ### 4.5 翻译任务
 
 - 一次翻译一本书的一种目标语言。
-- 相同目标语言重新翻译时覆盖旧译文（界面需提示）。
-- 任务状态：空闲、准备中、翻译中、已完成、失败、已取消。
-- 进度显示：百分比、已完成块数 / 总块数、当前章节。
+- 相同目标语言重新翻译时覆盖旧译文（界面需提示）。新任务完成前，旧的完整译文仍可阅读。
+- 任务状态：空闲、准备中、翻译中、已完成、部分完成、失败、已取消。
+- 进度显示：百分比、已译块数 / 总块数、剩余块数、失败块数、当前章节；已经发出过请求后显示预计剩余时间。
 - 默认串行，不并发轰炸免费接口。
-- 页面退出或点击取消后停止发送后续请求。
-- 翻译结果按 `bookId + 目标语言` 本地保存；切换目标语言时自动读取已有缓存。
+- 点击取消后停止后续请求，但保留已经成功的块。离开详情页会取消仍在跑的任务，已成功的块同样保留。
+- 同一 `bookId + 目标语言` 的草稿可以续译。正文没变的块不会再请求；失败块可以单独重试。
+- 整本成功后写入 `TranslationRecord` 并删除草稿。只完成了部分章节时，这些章节可以先读，但不能导出。
 - 译文保留章节边界和段落分隔；章节标题保留原文。
 
 ### 4.6 阅读器（v1.4 听书与流畅度增强）
@@ -414,7 +417,7 @@ QQ / 微信 / 文件管理器 → 「用其他应用打开」→ Beizx的阅读�
 - 网关接口为 `POST /v1/translate`，请求 `{text, from, to}`，响应 `{text, detectedSource, target}`；语言代码沿用有道 v3（`auto / zh-CHS / en / ja / ko`）。
 - 错误以 HTTP 状态 + `{error, code}` 返回：401 密钥无效、402 余额不足、429 频率受限、502 上游异常、503 网关未配置密钥。
 - 「测试连接」先探测 `GET /healthz`，再翻译 “Hello” 验证端到端链路。
-- **译文缓存（v1.4.1）**：成功译文按 `(from, to, text)` 的 SHA-256 进入进程内 TTL + LRU 缓存（默认 512 条 / 3600 秒，可用 `GATEWAY_CACHE_ENTRIES`、`GATEWAY_CACHE_TTL_SECONDS` 调整，设 0 关闭）；命中不消耗有道额度，响应头 `X-Cache: hit|miss` 说明来源。
+- **译文缓存（v1.4.1，v1.4.2 增加磁盘）**：成功译文按 `(from, to, text)` 的 SHA-256 进入 TTL + LRU（默认 512 条 / 3600 秒，`GATEWAY_CACHE_ENTRIES`、`GATEWAY_CACHE_TTL_SECONDS`，设 0 关闭）。v1.4.2 起默认再写一份到 `GATEWAY_CACHE_DIR`，重启后仍命中；`GATEWAY_CACHE_DISK=false` 可以只要内存。命中不消耗有道额度，响应头 `X-Cache: hit|miss`。`/healthz` 同时报告内存命中和 `diskHits`。
 - 同一段的并发请求（重试、多设备共用网关）由 single-flight 合并成一次上游调用；失败结果不缓存，避免把限频 / 网络错误写进缓存。
 - `/healthz` 增加 `translateCache` 计数（条数、命中、未命中、淘汰、过期），方便判断缓存是否生效。
 - 网关同时提供代理池接口（`/v1/proxies`、`/v1/proxies/take`、`/v1/proxies/refresh`），把原先 JVM/Kotlin 的代理服务迁移到 Go。
@@ -485,7 +488,7 @@ QQ / 微信 / 文件管理器 → 「用其他应用打开」→ Beizx的阅读�
 
 - 阅读模式：滚动阅读 / 翻页阅读。
 - 背景：夜色（默认，沿用品牌深蓝紫）、纸白、羊皮、护眼。
-- 字体：衬线体 / 无衬线体。
+- 字体：系统衬线、无衬线、等宽、窄黑体。不提供自定义字体文件。
 - 字重：常规 / 适中 / 偏粗。
 - 保持屏幕常亮；隐藏状态栏。
 - 显示时间、显示章节名、显示阅读进度、显示页码。
@@ -507,6 +510,7 @@ QQ / 微信 / 文件管理器 → 「用其他应用打开」→ Beizx的阅读�
 #### 操作
 
 - 点击翻页：翻页模式下点击左侧 / 右侧翻页，中间呼出工具栏；关闭后任意点击只切换工具栏。
+- 音量键翻页：默认关闭。打开后，阅读页在前台时音量上为上一页、音量下为下一页；滚动模式翻约一屏。iOS 侧边音量键仍调节系统音量。
 - 翻页动画：滑动 / 无动画。
 - 正文两端对齐；关闭后左对齐，便于英文阅读。
 - 恢复默认阅读设置。
@@ -532,7 +536,7 @@ QQ / 微信 / 文件管理器 → 「用其他应用打开」→ Beizx的阅读�
 
 - 阅读：阅读偏好入口（当前模式 / 字号 / 皮肤 / 字体摘要）、阅读记录（藏书、开读本数、累计时长）。
 - 翻译：当前引擎状态与入口（有道直连配置 / 自建 Go 网关地址与口令）；说明不配置也能阅读。
-- 关于：应用名「Beizx的阅读器」、版本 `v1.4.1 (8)`、技术栈与隐私说明。
+- 关于：应用名「Beizx的阅读器」、版本 `v1.4.3 (10)`、技术栈与隐私说明。
 
 ---
 
@@ -757,16 +761,17 @@ server/
 - `BookMeta`：id、title、author、fileName、format、chapterCount、charCount、importedAt。
 - `Book`：meta + `List<BookChapter>`。
 - `BookChapter`：id、index、title、text。
-- `TranslationRecord`：bookId、targetLanguage、sourceLanguage、providerId、createdAt、`List<TranslatedChapter>`。
+- `TranslationRecord`：bookId、targetLanguage、sourceLanguage、providerId、createdAt、`complete`、`List<TranslatedChapter>`。旧文件没有 `complete` 时视为已完成。
+- `TranslationDraft`：同一本书和目标语言的块级进度。键是 `章节 id + 块序号`，值带原文 SHA-256 和译文；另有失败块列表。
 - `AppLanguage`：内部 code、中文名、native 名、provider code、是否可作源/目标语言。
 - `DedupeCandidate`：章节、保留/移除语言、两侧段落行号与文本、可移除字数。
 - `DedupeAnalysis`：源书、保留语言、候选列表、扫描段落数、涉及章节与可移除字数。
 - `ReadingProgress`：bookId、当前章节、章节内比例 `chapterFraction`、累计阅读秒数、章节总数与最后阅读时间；`fraction` / `percent` / `label` / `isFinished` 为派生只读属性。
-- `ReaderPreferences`：模式、字号、行距、皮肤、衬线、字重、段间距、首行缩进、左右 / 上下边距、常亮、隐藏状态栏、点击翻页、翻页动画、时钟 / 章节 / 进度 / 页码指示、两端对齐；提供 JSON 序列化、`normalized()`、`layoutSignature`。
+- `ReaderPreferences`：模式、字号、行距、皮肤、`ReaderTypeface`（衬线 / 无衬线 / 等宽 / 窄黑体）、字重、段间距、首行缩进、左右 / 上下边距、常亮、隐藏状态栏、点击翻页、音量键翻页、翻页动画、时钟 / 章节 / 进度 / 页码指示、两端对齐；提供 JSON 序列化、`normalized()`、`layoutSignature`。旧的 `serif` 布尔值在没有 `typeface` 时仍能迁移。
 - `TtsPreferences`：倍速、音调、语音名称、语言区域、自动下一章；键 `tts.preferences.v1`。
 - `TtsSegment`：朗读文本、原文字符起止位置、段落序号；驱动高亮和句级跳转。
 - `Bookmark`：id、bookId、章节索引、章节标题、章节内比例、摘要、创建时间。
-- `AppInfo`：应用名称 `Beizx的阅读器`、版本号 `1.4.1`、构建号 `8`。
+- `AppInfo`：应用名称 `Beizx的阅读器`、版本号 `1.4.3`、构建号 `10`。
 
 ### 6.4 本地存储
 
@@ -775,7 +780,8 @@ server/
   - `progress.json`：各书章节、章节内位置、累计阅读秒数与更新时间。
   - `bookmarks.json`：全部书签（按书过滤、按时间倒序）。
   - `books/{bookId}.json`：完整解析文本。
-  - `translations/{bookId}_{lang}.json`：译文缓存。
+  - `translations/{bookId}_{lang}.json`：译文。`complete: false` 表示只有部分章节。
+  - `translations/{bookId}_{lang}.draft.json`：块级草稿，供断点续译。不计入「已翻译语言」统计。删除书籍时和译文一起删除。
   - `exports/`：导出文件临时目录。
 - 设置项（含语言、翻译偏好、完整阅读偏好与听书偏好）存 shared_preferences；密钥与网关口令单独存 secure storage。
 - 听书偏好键 `tts.preferences.v1`；定时关闭为会话状态，不落盘。
@@ -789,10 +795,12 @@ server/
 
 - `TextChunker` 按段落聚合到 ≤1800 字符；超长段落按句末标点切分，避免破坏语义。
 - `BookTranslator` 串行调用 `TranslationEngine.translate`：
-  - 每块完成后回调进度；
-  - 取消标记在请求前后检查；
+  - 每块完成后回调进度，并可通过 `onCheckpoint` 把草稿写盘；
+  - 取消标记在请求前后检查；取消时返回已成功的块，而不是丢掉整本；
+  - 单块失败并耗尽重试后记入失败列表，继续后面的块；
   - 请求间隔与重试策略集中在该层；
-  - 所有块成功后一次性写入 `TranslationRecord`。
+  - 全部块成功后写入 `complete: true` 的 `TranslationRecord` 并删除草稿。
+- `recordFromDraft` 只把「每一块都成功」的章节拼进可读译文。
 - 翻译引擎只发出用户选择的语言代码；直连有道与 Go 网关均通过各自适配器实现 `TranslationEngine`。
 - `GatewayEngine` 仅保存自建网关 URL 与可选 Token，不需要在 App 填有道 App ID / Secret。
 - Go 服务放在仓库 `server/`；当前 Flutter 项目仍是 Dart/Flutter，后端迁移不改变移动端 UI 技术栈。
@@ -870,9 +878,10 @@ server/
 
 ### 6.10 平台桥接
 
-- 屏幕常亮使用 `MethodChannel('com.yiyue.translation_app/reader')`，方法 `keepScreenOn(bool)`。
+- 屏幕常亮使用 `MethodChannel('com.yiyue.translation_app/reader')`，方法 `keepScreenOn(bool)`。同一通道还有 `openBackgroundSettings`：Android 打开电池优化列表（失败则打开应用详情），iOS 打开本应用的系统设置。
+- 音量键使用 `MethodChannel('com.yiyue.translation_app/volume')`。Dart 在阅读页处于前台且开关打开时调用 `setCapture(true)`；Android `dispatchKeyEvent` 把音量上 / 下转成 `-1` / `1` 并不再调节系统音量。开关关闭或离开阅读页时恢复系统音量。
 - Android `MainActivity.configureFlutterEngine` 中增删 `FLAG_KEEP_SCREEN_ON`。
-- iOS `AppDelegate.didInitializeImplicitFlutterEngine` 中设置 `UIApplication.shared.isIdleTimerDisabled`。
+- iOS `AppDelegate.didInitializeImplicitFlutterEngine` 中设置 `UIApplication.shared.isIdleTimerDisabled`。iOS 不拦截侧边音量键。
 - Dart 侧 `ReaderSystem.keepScreenOn` 捕获 `MissingPluginException` / `PlatformException`，在测试或未实现平台静默降级，不阻塞阅读。
 - 外部文件使用 `MethodChannel('com.yiyue.translation_app/files')`：
   - Dart → 原生：`takePendingFile`（冷启动拉取）；
@@ -965,7 +974,7 @@ server/
 3. 导入 EPUB，能按 spine 提取章节、书名与作者。
 4. 未配置密钥时，开始翻译被拦截并跳转到接口设置。
 5. 填入有效有道凭据并测试，返回中文译文；错误凭据时显示明确错误。
-6. 选择源/目标语言后开始翻译，进度可见，取消可立即停止。
+6. 选择源/目标语言后开始翻译，进度可见（含剩余段数）。取消会停止后续请求，并保留已经成功的段落，可以继续翻译。失败的块可以单独重试。
 7. 翻译成功后可按章节阅读原文与译文，切换目标语言能读取对应缓存。
 8. 可导出 TXT 与 EPUB；EPUB 能被重新导入并解析出译文。
 9. 重启 App 后书库、译文、语言设置仍在；密钥仍在安全存储。
@@ -973,7 +982,7 @@ server/
 11. 书籍详情可进入「多语去重」，可切换中文 / 日语 / 英语 / 韩语作为保留语言。
 12. 双语示例能识别相邻对照组，所有候选可预览、全选、取消全选、逐组取消。
 13. 生成去重版后，书库新增新书；原书内容不变，去重版只保留目标语言一侧并保留其余正文。
-14. 没有候选时显示空状态，两个生成按钮均不可用；当前版本号为 1.4.1。
+14. 没有候选时显示空状态，两个生成按钮均不可用；当前版本号为 1.4.3。
 15. 去重版可与普通书一样进入阅读、翻译和导出流程。
 16. 深蓝紫主题下，正文、次级文字、弱化文字与对应背景的对比度均 ≥ 4.5:1；状态栏/导航栏使用浅色图标。
 17. 勾选候选组后点击「生成并导出」，可选择 TXT 或 EPUB；生成的文件能通过分享面板保存，内容为去重后的章节正文。
@@ -983,11 +992,11 @@ server/
 21. 阅读器默认沉浸显示正文；点击正文可呼出顶部 / 底部工具栏，再次点击收起。
 22. 滚动模式上下滚动当前章节，左右滑动切换章节；阅读位置按章节内比例保存，从书架「继续阅读」能回到同一位置。
 23. 翻页模式能按当前屏幕和字号自动分页，页脚显示「第 N / M 页」；左右滑动 / 左右点击可翻页，章节边界可切换到相邻章节。
-24. 阅读设置三种分页可调：滚动 / 翻页、四种背景、字号、行距、段间距、首行缩进、边距、指示器、屏幕常亮、点击翻页、翻页动画；修改即时生效并在重启后恢复。
+24. 阅读设置可调：滚动 / 翻页、四种背景、四种系统字体、字号、行距、段间距、首行缩进、边距、指示器、屏幕常亮、点击翻页、音量键翻页、翻页动画；修改即时生效并在重启后恢复。音量键翻页默认关闭。
 25. 目录抽屉可搜索章节、高亮当前章节、标记已有译文；书签抽屉可添加、跳转、删除书签。
 26. 书籍详情优先展示「开始阅读 / 继续阅读」，并显示全书进度、累计阅读时长、书签数；前 8 章可直接跳转，其余章节可在全部目录中打开。
 27. 底部导航为「书架 / 设置」；设置页包含阅读偏好、阅读记录、翻译接口与关于信息，翻译不再是独立一级入口。
-28. 应用显示名为「Beizx的阅读器」，版本号 1.4.1（构建 8）。
+28. 应用显示名为「Beizx的阅读器」，版本号 1.4.3（构建 10）。
 29. 删除书籍后，其阅读进度、书签与译文一并清除；其他书不受影响。
 30. 翻页模式在工具栏显示时可长按选择正文；工具栏收起后横向滑动恢复翻页。
 31. 阅读器底部有「听书」入口；点击后从当前页开始朗读，正文高亮正在朗读的句子，且面板显示「第 N / M 句」。
@@ -1031,7 +1040,7 @@ server/
 - **翻页模式与文本选择**：横向滑动与选择手势存在冲突，工具栏显示时启用选择、收起时优先翻页；需要复制时先呼出工具栏。
 - **屏幕常亮**：依赖系统允许应用保持唤醒；部分定制系统仍可能按自身策略熄屏。应用仅提供开关，不承诺所有机型生效。
 - **听书依赖系统语音包**：使用系统 TTS，音色与质量取决于设备已安装的语音引擎；精简 ROM 可能没有中文语音，需要用户自行安装。
-- **听书后台播放**：Android 通过 `audio_service` 的 `mediaPlayback` 前台服务在息屏 / 后台继续朗读，iOS 依赖 `UIBackgroundModes=audio` 与 `AVAudioSession` 播放类别；部分定制 ROM 的省电策略仍可能杀掉后台服务，需要在系统设置里允许本应用后台运行。
+- **听书后台播放**：Android 通过 `audio_service` 的 `mediaPlayback` 前台服务在息屏 / 后台继续朗读，iOS 依赖 `UIBackgroundModes=audio` 与 `AVAudioSession` 播放类别。部分定制 ROM 仍可能杀掉后台服务。v1.4.2 会在第一次听书、朗读失败或上次播放被杀掉时提示一次，并可打开系统设置；用户可以选择不再提示。应用不会强制修改省电策略。
 - **锁屏控制依赖系统媒体会话**：通知栏 / 锁屏 / 车机的样式由系统决定，应用只能提供书名、章节名与播放控制；个别 ROM 的自定义媒体面板可能只显示基础按钮。
 - **外部打开的格式限制**：只接受 TXT / EPUB；部分应用会用 `application/octet-stream` 发送，已在意图过滤器中覆盖，但仍可能有应用发送私有 MIME 而无法列出本应用。
 - **Go 网关是可选自建服务**：仓库提供 `server/`，但不内置托管地址、不代管密钥；用户需自行部署并保证网络可达。
@@ -1085,6 +1094,47 @@ docker run -p 8080:8080 -e YOUDAO_APP_KEY=... -e YOUDAO_APP_SECRET=... beizx-rea
 ---
 
 ## 12. 版本历史
+
+### v1.4.3（2026-11-05）
+
+- 小版本号升到 `1.4.3+10`（`AppInfo` / `pubspec.yaml` 同步）。功能与 v1.4.2 相同，这一版是为了打出可安装的 Android 包。
+- 在 Linux 上执行 `flutter build apk --release`（本机没有 Windows 的 `robocopy`，所以没有跑 `tool/build_android.ps1`；产物命名与该脚本一致）。
+- 安装包：`artifacts/BeizxReader-v1.4.3.apk`，64,697,864 字节（约 64.7 MB）。SHA-256：`eee89be63e06b8d98c059d57742dd43da17d0c2e003e5bb68ecae9dd9a25b772`，并写入 `artifacts/SHA256SUMS.txt`。
+- 签名仍是 Flutter 模板的 debug 密钥，只适合本机安装测试。包内 `versionName` 为 `1.4.3`，`versionCode` 为 `10`。
+
+### v1.4.2（2026-11-05）
+
+**翻译可续：取消保留、失败段重试**
+
+- 同一本书、同一目标语言的翻译进度按块写入 `translations/{bookId}_{lang}.draft.json`。每一块带原文指纹，正文改过的块会重译，没改过的块直接复用。
+- 取消不再丢掉已经成功的段落。详情页出现「继续翻译」；只剩失败块时按钮是「重试失败段」，成功块不会再请求一次。
+- 某一块在自动重试后仍然失败时，任务继续翻译其余块，并保留已成功的章节。已译完的章节可以先读（「阅读已译章节」）；整本译完后才允许导出，并删掉草稿。
+- 进度条同时显示已译 / 剩余 / 失败段数。已经实际请求过的块会估算「预计还需」。
+- 重新翻译仍会先确认覆盖；确认后的新任务在完成前不会冲掉上一版完整译文。
+
+**阅读：音量键翻页与系统字体**
+
+- 阅读设置新增「音量键翻页」，默认关闭，音量键仍调节系统音量。打开后，阅读页在前台时音量上为上一页、音量下为下一页；滚动模式则翻约一屏，到章首 / 章末再换章。
+- Android 在开关打开且阅读页是当前页时拦截音量键；iOS 侧边音量键仍由系统接管（设置文案已说明）。
+- 字体从「衬线 / 无衬线」扩展为系统衬线、无衬线、等宽、窄黑体。自定义字体文件仍不做，避免阅读中途找不到字。
+
+**听书：后台与省电提示**
+
+- 第一次开始听书时弹出可关闭的说明：Android 引导到电池优化列表（打不开时退回应用详情），iOS 引导到本应用的系统设置。提供「稍后」和「不再提示」。
+- 朗读失败，或上次听书时进程被系统杀掉，会再提示一次，除非已经选择不再提示。不会强制改系统设置。
+
+**Go 网关：磁盘译文缓存**
+
+- 内存 TTL + LRU 之外，成功译文默认写到 `GATEWAY_CACHE_DIR`（默认 `cache/translations`）。进程重启后相同段落仍命中，不重复消耗有道额度。
+- 新增 `GATEWAY_CACHE_DISK`（默认开启）。条数上限与 `GATEWAY_CACHE_ENTRIES` 相同；TTL 仍由 `GATEWAY_CACHE_TTL_SECONDS` 控制，设 0 则整层关闭。
+- `/healthz` 的 `translateCache` 增加 `diskHits`、`diskWrites`、`diskEntries`。服务版本号改为 `1.1.1`。
+
+**版本与验证**
+
+- 版本升级为 `1.4.2+9`（`AppInfo` / `pubspec.yaml` 同步）。
+- `dart analyze lib test` 无问题；`flutter test` 132 项全部通过。
+- `server` 下 `go vet ./...`、`go test ./...` 全部通过（含磁盘缓存重启命中、过期与淘汰）。
+- 本次未在本环境重新打 APK。
 
 ### v1.4.1（2026-11-05）
 
@@ -1222,11 +1272,64 @@ docker run -p 8080:8080 -e YOUDAO_APP_KEY=... -e YOUDAO_APP_SECRET=... beizx-rea
 
 ---
 
-## 13. v1.4.1 改动位置速查
+## 13. v1.4.2 改动位置速查
 
-> 回答「这一版改了哪里」。v1.4.0 / v1.3.0 的速查表保留在 14、15 节。
+> 回答「这一版改了哪里」。更早的速查表在 14、15、16 节。
 
 ### 13.1 新增文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `lib/models/translation_draft.dart` | 按块保存的翻译草稿：原文指纹、失败块、剩余块 |
+| `lib/services/reader/background_playback_guide.dart` | 听书后台 / 省电的一次性说明，以及是否该再显示的判断 |
+| `server/internal/gateway/cache_disk.go` | 译文的文件缓存，重启后仍能命中 |
+| `test/translation_controller_test.dart` | 取消保留、续译跳过成功块、失败段单独重试 |
+| `test/background_playback_guide_test.dart` | 提示出现条件与「不再提示」 |
+
+### 13.2 修改文件
+
+| 文件 | 改动 |
+| --- | --- |
+| `lib/services/translation/book_translator.dart` | 断点续译、取消保留、失败块继续、剩余时间 |
+| `lib/state/translation_controller.dart` | 草稿落盘、部分译文、任务状态 `partial` |
+| `lib/services/local_store.dart` | `*.draft.json` 读写；语言统计忽略草稿 |
+| `lib/models/book.dart` | `TranslationRecord.complete`，旧文件缺省为已完成 |
+| `lib/screens/book_detail_screen.dart` | 「继续翻译」「重试失败段」「阅读已译章节」、进度与预计剩余 |
+| `lib/models/reader_settings.dart` | `ReaderTypeface`、音量键翻页开关 |
+| `lib/widgets/reader_settings_panel.dart`、`lib/widgets/reader_content.dart` | 四种系统字体；翻页 / 翻屏手柄 |
+| `lib/screens/chapter_reader_screen.dart` | 音量键只在阅读页当前且开关打开时翻页 |
+| `lib/services/reader/reader_system.dart` | 音量键捕获与打开系统后台设置 |
+| `android/.../MainActivity.kt` | 拦截音量键；打开电池优化设置 |
+| `ios/Runner/AppDelegate.swift` | 打开本应用的系统设置 |
+| `lib/app.dart`、`lib/state/settings_controller.dart` | 记住「不再提示」，并在上次听书被杀掉后提示 |
+| `server/internal/gateway/cache.go`、`server/cmd/server/main.go` | 磁盘层装配、`GATEWAY_CACHE_DISK` / `GATEWAY_CACHE_DIR`、版本 `1.1.1` |
+| `pubspec.yaml`、`lib/core/app_info.dart` | 版本 `1.4.2+9` |
+| `server/README.md`、`README.md`、`deepseek.md` | 缓存环境变量、版本与本版说明 |
+
+### 13.3 验证命令
+
+```bash
+dart analyze lib test        # 无问题
+flutter test                 # 132 项通过
+
+cd server
+go vet ./...                 # 无问题
+go test ./...                # 全部通过（含磁盘缓存）
+```
+
+### 13.4 本版明确没做
+
+- 用户自选字体文件（需要平台注册字体，做错会让正文丢字）。
+- iOS 侧边音量键翻页（系统不把这两个键交给应用）。
+- 云同步、新的翻译服务商、EPUB 图片保真。
+
+---
+
+## 14. v1.4.1 改动位置速查
+
+> 回答「这一版改了哪里」。v1.4.2 的速查在第 13 节；v1.4.0 / v1.3.0 保留在 15、16 节。
+
+### 14.1 新增文件
 
 | 文件 | 作用 |
 | --- | --- |
@@ -1237,7 +1340,7 @@ docker run -p 8080:8080 -e YOUDAO_APP_KEY=... -e YOUDAO_APP_SECRET=... beizx-rea
 | `test/support/fake_media_session.dart`、`test/tts_media_session_test.dart` | 媒体会话状态同步与远端命令测试 |
 | `test/reader_highlight_test.dart` | 朗读高亮只影响命中的那一段 |
 
-### 13.2 修改文件
+### 14.2 修改文件
 
 | 文件 | 改动 |
 | --- | --- |
@@ -1255,7 +1358,7 @@ docker run -p 8080:8080 -e YOUDAO_APP_KEY=... -e YOUDAO_APP_SECRET=... beizx-rea
 | `server/internal/httpapi/router.go` | `/healthz` 增加 `translateCache` |
 | `README.md`、`server/README.md`、`deepseek.md` | v1.4.1 功能、缓存配置、测试数量与边界说明 |
 
-### 13.3 验证命令
+### 14.3 验证命令
 
 ```bash
 # Flutter
@@ -1271,11 +1374,11 @@ go run ./cmd/server          # GET /healthz 可见 translateCache
 
 ---
 
-## 14. v1.4.0 改动位置速查
+## 15. v1.4.0 改动位置速查
 
-> 回答「哪里改了」。上一版（v1.3.0）的速查表保留在 13.x 之后的小节里。
+> 回答「哪里改了」。v1.3.0 的速查表在第 16 节。
 
-### 14.1 新增文件
+### 15.1 新增文件
 
 | 文件 | 作用 |
 | --- | --- |
@@ -1293,7 +1396,7 @@ go run ./cmd/server          # GET /healthz 可见 translateCache
 | `lib/services/import/external_file_service.dart` | 外部打开通道封装 |
 | `test/tts_controller_test.dart`、`test/gateway_engine_test.dart`、`test/external_file_service_test.dart`、`test/support/fake_speech_engine.dart` | 新增测试 |
 
-### 14.2 修改文件
+### 15.2 修改文件
 
 | 文件 | 改动 |
 | --- | --- |
@@ -1313,7 +1416,7 @@ go run ./cmd/server          # GET /healthz 可见 translateCache
 | `ios/Runner/AppDelegate.swift` | `files` 通道与 `application(_:open:)` 处理 |
 | `test/app_screens_test.dart` | 注入 `TtsController`，新增听书面板测试 |
 
-### 14.3 验证命令
+### 15.3 验证命令
 
 ```bash
 # Flutter
@@ -1332,11 +1435,11 @@ powershell -File tool/build_android.ps1
 
 ---
 
-## 15. v1.3.0 改动位置速查
+## 16. v1.3.0 改动位置速查
 
 > 这一节专门回答「哪里改了」。按目录列出文件、改动与验证方式。
 
-### 15.1 身份与版本
+### 16.1 身份与版本
 
 | 位置 | 改动 |
 | --- | --- |
@@ -1351,7 +1454,7 @@ powershell -File tool/build_android.ps1
 | `lib/services/document_exporter.dart`、`lib/services/export_service.dart` | 导出文件与分享文案更名 |
 | `tool/build_android.ps1` | APK 产物名改为 ASCII 的 `BeizxReader-v<version>.apk`，避免 PowerShell 5.1 中文脚本路径问题 |
 
-### 15.2 阅读模型与持久化
+### 16.2 阅读模型与持久化
 
 | 位置 | 改动 |
 | --- | --- |
@@ -1363,7 +1466,7 @@ powershell -File tool/build_android.ps1
 | `lib/state/settings_controller.dart` | 阅读偏好改为单 JSON 持久化（`reader.preferences.v2`），兼容 v1.2 四项旧键，新增 `resetReaderPreferences` |
 | `lib/core/utils/text_utils.dart` | 新增 `formatReadingDuration`、`formatClockTime`、`excerpt` |
 
-### 15.3 阅读器本体
+### 16.3 阅读器本体
 
 | 位置 | 改动 |
 | --- | --- |
@@ -1378,7 +1481,7 @@ powershell -File tool/build_android.ps1
 | `android/app/src/main/kotlin/com/yiyue/translation_app/MainActivity.kt` | 新增 `com.yiyue.translation_app/reader` 通道与 `FLAG_KEEP_SCREEN_ON` 开关 |
 | `ios/Runner/AppDelegate.swift` | 注册同名通道，设置 `UIApplication.shared.isIdleTimerDisabled` |
 
-### 15.4 阅读优先的页面调整
+### 16.4 阅读优先的页面调整
 
 | 位置 | 改动 |
 | --- | --- |
@@ -1386,7 +1489,7 @@ powershell -File tool/build_android.ps1
 | `lib/screens/book_detail_screen.dart` | 新增 `_ReadingCard`（开始 / 继续阅读、进度、阅读时长、书签数）；章节列表前置并改为前 8 章 + 全部章节抽屉；翻译设置与多语去重下移；详情监听书库以刷新进度 |
 | `lib/screens/api_settings_screen.dart` | 页面保留，但不再是一级导航；从「设置 → 翻译接口」或书籍详情进入 |
 
-### 15.5 测试与文档
+### 16.5 测试与文档
 
 | 位置 | 改动 |
 | --- | --- |
@@ -1399,7 +1502,7 @@ powershell -File tool/build_android.ps1
 | `README.md` | 更新为 v1.3.0 阅读器定位、构建 / 测试 / 已知边界 |
 | `deepseek.md` | 本文件：产品定位、功能、技术、验收、版本历史与本节改动速查 |
 
-### 15.6 关键数据与行为变化
+### 16.6 关键数据与行为变化
 
 - `progress.json` 新增 `chapterFraction`、`readingSeconds`；旧文件缺少字段时按 0 处理。
 - 新增 `bookmarks.json`；删除书籍时会删除对应书签。
@@ -1407,7 +1510,7 @@ powershell -File tool/build_android.ps1
 - 全书百分比语义从「已打开章节比例」改为「章节 + 章节内位置」，同一进度数值会与 v1.2 不同。
 - 底部导航的第二个入口从「接口设置」变为「设置」；翻译入口移动到设置页与书籍详情工具区。
 
-### 15.7 手动验收路径
+### 16.7 手动验收路径
 
 1. 导入 `samples/长夜灯塔.txt`，确认书架出现书卡；打开详情，点击「开始阅读」。
 2. 阅读器内点击正文呼出工具栏；打开「设置 → 外观」，切换「翻页阅读」与「纸白」。

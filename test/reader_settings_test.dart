@@ -13,7 +13,8 @@ void main() {
       fontSize: 21,
       lineHeight: 2.1,
       skin: ReaderSkin.sepia,
-      serif: false,
+      typeface: ReaderTypeface.sans,
+      volumeKeysTurnPages: true,
       mode: ReaderMode.page,
       fontWeight: ReaderFontWeight.medium,
       paragraphSpacing: 18,
@@ -117,6 +118,8 @@ void main() {
     expect(controller.readerPreferences.lineHeight, 2.2);
     expect(controller.readerPreferences.skin, ReaderSkin.sepia);
     expect(controller.readerPreferences.serif, isFalse);
+    expect(controller.readerPreferences.typeface, ReaderTypeface.sans);
+    expect(controller.readerPreferences.volumeKeysTurnPages, isFalse);
     expect(controller.readerPreferences.mode, ReaderMode.scroll);
   });
 }

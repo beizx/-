@@ -289,3 +289,105 @@ func TestTranslateHandlerReportsCacheHeader(t *testing.T) {
 		t.Fatalf("expected 1 upstream call, got %d", upstream.callCount())
 	}
 }
+
+func TestDiskCacheSurvivesNewTranslator(t *testing.T) {
+	dir := t.TempDir()
+	upstream := &countingTranslator{result: Result{Text: "译文", DetectedSource: "en", Target: "zh-CHS"}}
+	first := NewCachedTranslator(upstream, CacheConfig{Entries: 8, TTL: time.Minute, Dir: dir})
+	ctx := context.Background()
+	if _, err := first.Translate(ctx, "hello", "en", "zh-CHS"); err != nil {
+		t.Fatalf("first translate: %v", err)
+	}
+	if stats := first.Stats(); stats.DiskWrites != 1 || stats.DiskEntries != 1 {
+		t.Fatalf("expected a disk write, got %+v", stats)
+	}
+
+	secondUpstream := &countingTranslator{result: Result{Text: "不应出现"}}
+	second := NewCachedTranslator(secondUpstream, CacheConfig{Entries: 8, TTL: time.Minute, Dir: dir})
+	got, err := second.Translate(ctx, "hello", "en", "zh-CHS")
+	if err != nil {
+		t.Fatalf("second translate: %v", err)
+	}
+	if !got.Cached || got.Text != "译文" || got.DetectedSource != "en" {
+		t.Fatalf("disk hit = %+v", got)
+	}
+	if secondUpstream.callCount() != 0 {
+		t.Fatalf("disk hit must not call upstream, got %d", secondUpstream.callCount())
+	}
+	if stats := second.Stats(); stats.DiskHits != 1 || stats.Misses != 0 {
+		t.Fatalf("unexpected stats %+v", stats)
+	}
+
+	// The promoted entry is now in memory, so another read is a memory hit.
+	if _, err := second.Translate(ctx, "hello", "en", "zh-CHS"); err != nil {
+		t.Fatalf("third translate: %v", err)
+	}
+	if stats := second.Stats(); stats.Hits != 1 || stats.DiskHits != 1 {
+		t.Fatalf("expected memory hit after promotion, got %+v", stats)
+	}
+}
+
+func TestDiskCacheExpires(t *testing.T) {
+	dir := t.TempDir()
+	current := time.Unix(1_700_000_000, 0)
+	now := func() time.Time { return current }
+	upstream := &countingTranslator{result: Result{Text: "译文"}}
+	first := NewCachedTranslator(upstream, CacheConfig{Entries: 4, TTL: 30 * time.Second, Dir: dir, Now: now})
+	ctx := context.Background()
+	if _, err := first.Translate(ctx, "hello", "en", "zh-CHS"); err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	current = current.Add(31 * time.Second)
+	secondUpstream := &countingTranslator{result: Result{Text: "新译文"}}
+	second := NewCachedTranslator(secondUpstream, CacheConfig{Entries: 4, TTL: 30 * time.Second, Dir: dir, Now: now})
+	got, err := second.Translate(ctx, "hello", "en", "zh-CHS")
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if got.Cached || got.Text != "新译文" {
+		t.Fatalf("expired disk entry must miss, got %+v", got)
+	}
+	if secondUpstream.callCount() != 1 {
+		t.Fatalf("expected a refresh, got %d calls", secondUpstream.callCount())
+	}
+}
+
+func TestDiskCacheEvictsOldestFile(t *testing.T) {
+	dir := t.TempDir()
+	upstream := &countingTranslator{result: Result{Text: "译文"}}
+	cache := NewCachedTranslator(upstream, CacheConfig{Entries: 1, TTL: time.Minute, Dir: dir})
+	ctx := context.Background()
+	if _, err := cache.Translate(ctx, "one", "en", "zh-CHS"); err != nil {
+		t.Fatalf("translate one: %v", err)
+	}
+	// ModTime resolution can collapse two immediate writes; push the first
+	// file into the past so eviction order is deterministic.
+	time.Sleep(20 * time.Millisecond)
+	if _, err := cache.Translate(ctx, "two", "en", "zh-CHS"); err != nil {
+		t.Fatalf("translate two: %v", err)
+	}
+	if stats := cache.Stats(); stats.DiskEntries != 1 {
+		t.Fatalf("disk cap should keep one file, got %+v", stats)
+	}
+
+	restarted := NewCachedTranslator(&countingTranslator{result: Result{Text: "新"}}, CacheConfig{
+		Entries: 1,
+		TTL:     time.Minute,
+		Dir:     dir,
+	})
+	got, err := restarted.Translate(ctx, "two", "en", "zh-CHS")
+	if err != nil {
+		t.Fatalf("translate two: %v", err)
+	}
+	if !got.Cached || got.Text != "译文" {
+		t.Fatalf("newest disk entry should survive, got %+v", got)
+	}
+	got, err = restarted.Translate(ctx, "one", "en", "zh-CHS")
+	if err != nil {
+		t.Fatalf("translate one: %v", err)
+	}
+	if got.Cached {
+		t.Fatalf("evicted disk entry must miss, got %+v", got)
+	}
+}

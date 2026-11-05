@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -231,6 +232,53 @@ void main() {
     await tester.tapAt(const Offset(360, 420));
     await tester.pumpAndSettle();
     expect(find.text('第 2 / 2 章'), findsOneWidget);
+  });
+
+  testWidgets('volume keys turn pages only when the preference is on', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final settings = SettingsController(preferences: preferences);
+    await settings.setReaderPreferences(
+      const ReaderPreferences(mode: ReaderMode.page),
+    );
+
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SettingsController>.value(
+        value: settings,
+        child: MaterialApp(
+          theme: AppTheme.build(),
+          home: ChapterReaderScreen(book: _book(), initialChapterIndex: 0),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('海面起了雾'), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeDown);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('海面起了雾'), findsOneWidget);
+    expect(find.textContaining('船在清晨靠岸'), findsNothing);
+
+    await settings.setReaderPreferences(
+      const ReaderPreferences(mode: ReaderMode.page, volumeKeysTurnPages: true),
+    );
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeDown);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('船在清晨靠岸'), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.audioVolumeUp);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('海面起了雾'), findsOneWidget);
   });
 
   testWidgets('page mode splits a long chapter and swipes between pages', (

@@ -104,29 +104,31 @@ class _AppearanceTab extends StatelessWidget {
         const SizedBox(height: 22),
         const _GroupLabel('字体'),
         const SizedBox(height: 9),
-        Row(
-          children: [
-            Expanded(
-              child: _ChoiceCard(
-                label: '衬线体',
-                preview: '宋',
-                serif: true,
-                selected: preferences.serif,
-                onTap: () => onUpdate(preferences.copyWith(serif: true)),
-              ),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: _ChoiceCard(
-                label: '无衬线',
-                preview: '黑',
-                serif: false,
-                selected: !preferences.serif,
-                onTap: () => onUpdate(preferences.copyWith(serif: false)),
-              ),
-            ),
-          ],
-        ),
+        for (var row = 0; row < ReaderTypeface.values.length; row += 2) ...[
+          Row(
+            children: [
+              for (var column = 0; column < 2; column++) ...[
+                if (column > 0) const SizedBox(width: 9),
+                Expanded(
+                  child: _TypefaceCard(
+                    face: ReaderTypeface.values[row + column],
+                    selected:
+                        preferences.typeface ==
+                        ReaderTypeface.values[row + column],
+                    onTap: () => onUpdate(
+                      preferences.copyWith(
+                        typeface: ReaderTypeface.values[row + column],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (row + 2 < ReaderTypeface.values.length) const SizedBox(height: 9),
+        ],
+        const SizedBox(height: 8),
+        const _Footnote('使用系统自带字体。自定义字体文件暂不支持，避免阅读中途找不到字。'),
         const SizedBox(height: 9),
         SegmentedButton<ReaderFontWeight>(
           segments: [
@@ -315,6 +317,15 @@ class _ControlsTab extends StatelessWidget {
           onChanged: (value) =>
               onUpdate(preferences.copyWith(tapToTurnPage: value)),
         ),
+        _SwitchRow(
+          icon: Icons.volume_up_outlined,
+          title: '音量键翻页',
+          subtitle:
+              '阅读页获得焦点时，音量上翻到上一页，音量下翻到下一页；滚动模式则翻一屏。关闭后音量键仍调节系统音量。iOS 侧边音量键由系统接管。',
+          value: preferences.volumeKeysTurnPages,
+          onChanged: (value) =>
+              onUpdate(preferences.copyWith(volumeKeysTurnPages: value)),
+        ),
         const SizedBox(height: 14),
         const _GroupLabel('翻页动画'),
         const SizedBox(height: 9),
@@ -344,6 +355,7 @@ class _ControlsTab extends StatelessWidget {
             '左右滑动：翻页，翻到章节末自动进入下一章',
             '点击左 / 右：上一页 / 下一页',
             '点击中间：显示或隐藏工具栏',
+            '音量键翻页开启后：音量上上一页，音量下下一页',
           ],
         ),
         const SizedBox(height: 12),
@@ -546,18 +558,14 @@ class _SkinSwatch extends StatelessWidget {
   }
 }
 
-class _ChoiceCard extends StatelessWidget {
-  const _ChoiceCard({
-    required this.label,
-    required this.preview,
-    required this.serif,
+class _TypefaceCard extends StatelessWidget {
+  const _TypefaceCard({
+    required this.face,
     required this.selected,
     required this.onTap,
   });
 
-  final String label;
-  final String preview;
-  final bool serif;
+  final ReaderTypeface face;
   final bool selected;
   final VoidCallback onTap;
 
@@ -579,10 +587,10 @@ class _ChoiceCard extends StatelessWidget {
         child: Column(
           children: [
             Text(
-              preview,
+              face.preview,
               style: TextStyle(
-                fontFamily: serif ? AppTheme.serif : null,
-                fontFamilyFallback: serif ? AppTheme.serifFallback : null,
+                fontFamily: face.fontFamily,
+                fontFamilyFallback: face.fallback,
                 fontSize: 19,
                 fontWeight: FontWeight.w600,
                 color: selected ? AppColors.accent : AppColors.ink,
@@ -590,7 +598,7 @@ class _ChoiceCard extends StatelessWidget {
             ),
             const SizedBox(height: 3),
             Text(
-              label,
+              face.label,
               style: TextStyle(
                 fontSize: 11,
                 color: selected ? AppColors.accent : AppColors.muted,

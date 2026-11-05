@@ -55,6 +55,8 @@ class SettingsController extends ChangeNotifier {
   static const _readerSerifKey = 'reader.serif';
   static const _readerPreferencesKey = 'reader.preferences.v2';
   static const _ttsPreferencesKey = 'tts.preferences.v1';
+  static const _backgroundGuideKey = 'tts.background_guide_dismissed';
+  static const _ttsWasActiveKey = 'tts.was_active';
 
   final SharedPreferences _preferences;
   final FlutterSecureStorage _secureStorage;
@@ -84,6 +86,12 @@ class SettingsController extends ChangeNotifier {
   String? get storageError => _storageError;
   ReaderPreferences get readerPreferences => _reader;
   TtsPreferences get ttsPreferences => _tts;
+
+  bool get backgroundPlaybackGuideDismissed =>
+      _preferences.getBool(_backgroundGuideKey) ?? false;
+
+  /// True when the process last exited while 听书 was still playing or paused.
+  bool get ttsWasActive => _preferences.getBool(_ttsWasActiveKey) ?? false;
 
   bool get isYoudaoConfigured =>
       (_youdaoAppKey?.trim().isNotEmpty ?? false) &&
@@ -159,7 +167,9 @@ class SettingsController extends ChangeNotifier {
         ReaderPreferences.maxLineHeight,
       ),
       skin: ReaderSkin.byName(_preferences.getString(_readerSkinKey)),
-      serif: _preferences.getBool(_readerSerifKey) ?? true,
+      typeface: (_preferences.getBool(_readerSerifKey) ?? true)
+          ? ReaderTypeface.serif
+          : ReaderTypeface.sans,
     ).normalized();
   }
 
@@ -175,6 +185,16 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> resetReaderPreferences() =>
       setReaderPreferences(const ReaderPreferences());
+
+  Future<void> dismissBackgroundPlaybackGuide() async {
+    await _preferences.setBool(_backgroundGuideKey, true);
+    notifyListeners();
+  }
+
+  Future<void> setTtsWasActive(bool active) async {
+    if (ttsWasActive == active) return;
+    await _preferences.setBool(_ttsWasActiveKey, active);
+  }
 
   Future<void> setTtsPreferences(TtsPreferences preferences) async {
     final normalized = preferences.normalized();
@@ -228,10 +248,7 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> saveGatewayConfig({
-    required String url,
-    String? token,
-  }) async {
+  Future<void> saveGatewayConfig({required String url, String? token}) async {
     final trimmedUrl = url.trim();
     if (trimmedUrl.isEmpty) {
       throw const FormatException('网关地址不能为空');

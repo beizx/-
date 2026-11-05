@@ -29,7 +29,7 @@ import (
 )
 
 // version is reported by /healthz.
-const version = "1.1.0"
+const version = "1.1.1"
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -65,12 +65,17 @@ func main() {
 
 	// Repeated chunks are the norm (re-reading a chapter, two devices on one
 	// gateway), so successful translations are cached in-process.
+	cacheDir := ""
+	if cfg.CacheDisk {
+		cacheDir = cfg.CacheDir
+	}
 	cache := gateway.NewCachedTranslator(translator, gateway.CacheConfig{
 		Entries: cfg.CacheEntries,
 		TTL:     cfg.CacheTTL,
+		Dir:     cacheDir,
 	})
 	if cache.Enabled() {
-		logger.Info("translate cache enabled", "entries", cfg.CacheEntries, "ttl", cfg.CacheTTL)
+		logger.Info("translate cache enabled", "entries", cfg.CacheEntries, "ttl", cfg.CacheTTL, "disk", cacheDir)
 	}
 
 	handler := httpapi.NewRouter(httpapi.Options{
@@ -167,6 +172,8 @@ type config struct {
 	YoudaoSecret         string
 	CacheEntries         int
 	CacheTTL             time.Duration
+	CacheDisk            bool
+	CacheDir             string
 	ProxyEnabled         bool
 	ProxyTarget          int
 	ProxyCheckURL        string
@@ -182,6 +189,8 @@ func loadConfig() config {
 		YoudaoSecret:         os.Getenv("YOUDAO_APP_SECRET"),
 		CacheEntries:         envInt("GATEWAY_CACHE_ENTRIES", 512),
 		CacheTTL:             time.Duration(envInt("GATEWAY_CACHE_TTL_SECONDS", 3600)) * time.Second,
+		CacheDisk:            envBool("GATEWAY_CACHE_DISK", true),
+		CacheDir:             envString("GATEWAY_CACHE_DIR", "cache/translations"),
 		ProxyEnabled:         envBool("PROXY_ENABLED", true),
 		ProxyTarget:          envInt("PROXY_TARGET", 20),
 		ProxyCheckURL:        envString("PROXY_CHECK_URL", proxypool.DefaultCheckURL),

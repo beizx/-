@@ -1,4 +1,4 @@
-# Beizx的阅读器 v1.4.1
+# Beizx的阅读器 v1.4.3
 
 本地优先的 **TXT / EPUB 小说阅读器**，使用 Flutter 构建，支持 Android 与 iOS。阅读是主角，翻译是一个随时可用的附加功能。
 
@@ -12,7 +12,7 @@
 - **章节与书签**：目录支持搜索、当前章节高亮、译文标记；书签可添加、查看、跳转、删除
 - **精确进度**：记录到章节内的滚动位置或页码，并在书架「继续阅读」与书籍详情恢复；同时累计每本书的阅读时长
 - **可选翻译**：整书中 / 日 / 韩 / 英互译，接口未配置也不影响阅读；支持「有道直连」或「自建 Go 网关」
-- **Go 后端**：`server/` 提供有道签名网关与代理池，v1.4.1 起带 TTL + LRU 译文缓存与并发合并，重复段落不再消耗额度
+- **Go 后端**：`server/` 提供有道签名网关与代理池。译文缓存是内存 TTL + LRU，并默认落到磁盘，重启后重复段落仍不消耗额度
 - 多语去重、TXT / EPUB 导出、密钥安全存储等 v1.1–v1.3 能力全部保留
 
 完整产品设计与版本更新日志见 [deepseek.md](deepseek.md)。
@@ -25,7 +25,7 @@
 
 ## 安装包
 
-当前 Android 安装包：`artifacts/BeizxReader-v1.4.1.apk`（Release 构建，约 60.9 MB；沿用 debug 签名，仅适合本地安装测试）。校验值见 `artifacts/SHA256SUMS.txt`。
+当前 Android 安装包：`artifacts/BeizxReader-v1.4.3.apk`（Release 构建，约 64.7 MB；沿用 debug 签名，仅适合本地安装测试）。校验值见 `artifacts/SHA256SUMS.txt`。
 
 > v1.4.1 新增 `audio_service` / `audio_session` 原生依赖与后台播放配置，已随本次构建打包；重新构建时同样使用 `tool/build_android.ps1`。
 
@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 
 > 目录联接（junction）和映射磁盘仍会被 Flutter 还原成中文真实路径，不能绕过 AOT 限制；暂存目录必须是真实的纯 ASCII 路径。脚本默认使用 `%LOCALAPPDATA%\Temp\translation_app_build_ascii`，并从 `pubspec.yaml` 自动读取版本号生成 APK 文件名。
 
-构建产物位于 `artifacts/BeizxReader-v1.4.1.apk`，同时复制到 `build/app/outputs/flutter-apk/app-release.apk`。
+构建产物位于 `artifacts/BeizxReader-v1.4.3.apk`，同时复制到 `build/app/outputs/flutter-apk/app-release.apk`。
 
 > 当前 `release` 构建沿用 Flutter 模板的 debug 签名，仅供本地安装与测试。正式上架 / 分发前，请在 `android/app/build.gradle.kts` 中配置自己的 keystore 签名。
 

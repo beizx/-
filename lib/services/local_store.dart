@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/book.dart';
 import '../models/bookmark.dart';
 import '../models/reading_progress.dart';
+import '../models/translation_draft.dart';
 
 /// Owns the on-device workspace:
 ///
@@ -17,6 +18,7 @@ import '../models/reading_progress.dart';
 ///   bookmarks.json
 ///   books/{bookId}.json
 ///   translations/{bookId}_{language}.json
+///   translations/{bookId}_{language}.draft.json
 ///   exports/
 /// ```
 ///
@@ -206,12 +208,40 @@ class LocalStore {
     }
   }
 
+  Future<TranslationDraft?> loadDraft(String bookId, String language) async {
+    final file = _draftFile(bookId, language);
+    if (!await file.exists()) return null;
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map) return null;
+      return TranslationDraft.fromJson(Map<String, Object?>.from(decoded));
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> saveDraft(TranslationDraft draft) async {
+    await _writeJson(
+      _draftFile(draft.bookId, draft.targetLanguage),
+      draft.toJson(),
+    );
+  }
+
+  Future<void> deleteDraft(String bookId, String language) async {
+    final file = _draftFile(bookId, language);
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+
   /// All translated language codes across the library, used for home stats.
   Future<Set<String>> translatedLanguages() async {
     final languages = <String>{};
     if (!await _translationsDirectory.exists()) return languages;
     await for (final entity in _translationsDirectory.list()) {
       if (entity is! File) continue;
+      final fileName = p.basename(entity.path);
+      if (fileName.endsWith('.draft.json')) continue;
       final name = p.basenameWithoutExtension(entity.path);
       final separator = name.lastIndexOf('_');
       if (separator == -1 || separator == name.length - 1) continue;
@@ -226,6 +256,16 @@ class LocalStore {
       p.join(
         _translationsDirectory.path,
         '${_safeId(bookId)}_$safeLanguage.json',
+      ),
+    );
+  }
+
+  File _draftFile(String bookId, String language) {
+    final safeLanguage = _safeId(language);
+    return File(
+      p.join(
+        _translationsDirectory.path,
+        '${_safeId(bookId)}_$safeLanguage.draft.json',
       ),
     );
   }

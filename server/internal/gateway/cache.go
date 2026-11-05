@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +15,14 @@ import (
 // CacheStats is a snapshot of the translate cache counters, reported by
 // /healthz so an operator can see whether the cache is paying off.
 type CacheStats struct {
-	Entries   int   `json:"entries"`
-	Hits      int64 `json:"hits"`
-	Misses    int64 `json:"misses"`
-	Evictions int64 `json:"evictions"`
-	Expired   int64 `json:"expired"`
+	Entries     int   `json:"entries"`
+	Hits        int64 `json:"hits"`
+	Misses      int64 `json:"misses"`
+	Evictions   int64 `json:"evictions"`
+	Expired     int64 `json:"expired"`
+	DiskHits    int64 `json:"diskHits"`
+	DiskWrites  int64 `json:"diskWrites"`
+	DiskEntries int   `json:"diskEntries"`
 }
 
 // CacheConfig configures a CachedTranslator. A zero Entries or TTL disables
@@ -26,6 +30,10 @@ type CacheStats struct {
 type CacheConfig struct {
 	Entries int
 	TTL     time.Duration
+	// Dir, when set, mirrors successful entries onto disk so a process
+	// restart can still serve them. Empty disables the file layer.
+	// The on-disk cap matches Entries.
+	Dir string
 	// Now is injectable so tests can move time forward without sleeping.
 	Now func() time.Time
 }
@@ -48,15 +56,18 @@ type CachedTranslator struct {
 	ttl  time.Duration
 	max  int
 	now  func() time.Time
+	disk *diskCache
 
-	mu        sync.Mutex
-	entries   map[string]*list.Element
-	order     *list.List
-	flights   map[string]*translationFlight
-	hits      int64
-	misses    int64
-	evictions int64
-	expired   int64
+	mu         sync.Mutex
+	entries    map[string]*list.Element
+	order      *list.List
+	flights    map[string]*translationFlight
+	hits       int64
+	misses     int64
+	evictions  int64
+	expired    int64
+	diskHits   int64
+	diskWrites int64
 }
 
 type cacheEntry struct {
@@ -81,7 +92,7 @@ func NewCachedTranslator(next Translator, cfg CacheConfig) *CachedTranslator {
 	if maxEntries < 0 {
 		maxEntries = 0
 	}
-	return &CachedTranslator{
+	cache := &CachedTranslator{
 		next:    next,
 		ttl:     cfg.TTL,
 		max:     maxEntries,
@@ -90,6 +101,12 @@ func NewCachedTranslator(next Translator, cfg CacheConfig) *CachedTranslator {
 		order:   list.New(),
 		flights: make(map[string]*translationFlight),
 	}
+	if dir := strings.TrimSpace(cfg.Dir); dir != "" && maxEntries > 0 && cfg.TTL > 0 {
+		if err := os.MkdirAll(dir, 0o755); err == nil {
+			cache.disk = &diskCache{dir: dir, max: maxEntries, ttl: cfg.TTL, now: now}
+		}
+	}
+	return cache
 }
 
 // Enabled reports whether the cache will actually be used.
@@ -113,10 +130,26 @@ func (c *CachedTranslator) Translate(
 	}
 
 	key := cacheKey(text, from, to)
-	if result, ok := c.lookup(key); ok {
+	if result, ok := c.lookupMemory(key); ok {
+		if c.disk != nil {
+			c.disk.Touch(key)
+		}
 		result.Cached = true
 		return result, nil
 	}
+	if c.disk != nil {
+		if result, ok := c.disk.Get(key); ok {
+			c.mu.Lock()
+			c.diskHits++
+			c.remember(key, result)
+			c.mu.Unlock()
+			result.Cached = true
+			return result, nil
+		}
+	}
+	c.mu.Lock()
+	c.misses++
+	c.mu.Unlock()
 	return c.translateOnce(ctx, key, text, from, to)
 }
 
@@ -127,22 +160,28 @@ func (c *CachedTranslator) Stats() CacheStats {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	diskEntries := 0
+	if c.disk != nil {
+		diskEntries = c.disk.Len()
+	}
 	return CacheStats{
-		Entries:   c.order.Len(),
-		Hits:      c.hits,
-		Misses:    c.misses,
-		Evictions: c.evictions,
-		Expired:   c.expired,
+		Entries:     c.order.Len(),
+		Hits:        c.hits,
+		Misses:      c.misses,
+		Evictions:   c.evictions,
+		Expired:     c.expired,
+		DiskHits:    c.diskHits,
+		DiskWrites:  c.diskWrites,
+		DiskEntries: diskEntries,
 	}
 }
 
-func (c *CachedTranslator) lookup(key string) (Result, bool) {
+func (c *CachedTranslator) lookupMemory(key string) (Result, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	element, ok := c.entries[key]
 	if !ok {
-		c.misses++
 		return Result{}, false
 	}
 	entry := element.Value.(*cacheEntry)
@@ -150,7 +189,6 @@ func (c *CachedTranslator) lookup(key string) (Result, bool) {
 		c.order.Remove(element)
 		delete(c.entries, key)
 		c.expired++
-		c.misses++
 		return Result{}, false
 	}
 	c.order.MoveToFront(element)
@@ -178,19 +216,30 @@ func (c *CachedTranslator) translateOnce(
 
 	result, err := c.next.Translate(ctx, text, from, to)
 
+	var expires time.Time
 	c.mu.Lock()
 	delete(c.flights, key)
 	if err == nil {
-		c.store(key, result)
+		c.remember(key, result)
+		expires = c.now().Add(c.ttl)
 	}
+	disk := c.disk
 	c.mu.Unlock()
+	if err == nil && disk != nil {
+		if putErr := disk.Put(key, result, expires); putErr == nil {
+			c.mu.Lock()
+			c.diskWrites++
+			c.mu.Unlock()
+		}
+	}
 	flight.result, flight.err = result, err
 	close(flight.done)
 	return result, err
 }
 
-// store inserts or refreshes an entry. Callers must hold the lock.
-func (c *CachedTranslator) store(key string, result Result) {
+// remember inserts or refreshes a memory entry. Callers must hold the lock.
+// Disk persistence is handled by the caller so this lock does not cover IO.
+func (c *CachedTranslator) remember(key string, result Result) {
 	expires := c.now().Add(c.ttl)
 	if element, ok := c.entries[key]; ok {
 		entry := element.Value.(*cacheEntry)
