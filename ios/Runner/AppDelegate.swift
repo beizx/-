@@ -24,10 +24,19 @@ import UniformTypeIdentifiers
         binaryMessenger: registrar.messenger()
       )
       channel.setMethodCallHandler { call, result in
-        if call.method == "keepScreenOn" {
+        switch call.method {
+        case "keepScreenOn":
           UIApplication.shared.isIdleTimerDisabled = (call.arguments as? Bool) ?? false
           result(nil)
-        } else {
+        case "openBackgroundSettings":
+          guard let url = URL(string: UIApplication.openSettingsURLString) else {
+            result(false)
+            return
+          }
+          UIApplication.shared.open(url, options: [:]) { opened in
+            result(opened)
+          }
+        default:
           result(FlutterMethodNotImplemented)
         }
       }

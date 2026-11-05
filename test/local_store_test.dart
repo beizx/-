@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:translation_app/models/book.dart';
 import 'package:translation_app/models/language.dart';
 import 'package:translation_app/models/reading_progress.dart';
+import 'package:translation_app/models/translation_draft.dart';
 import 'package:translation_app/services/local_store.dart';
 
 Book _book() {
@@ -111,6 +112,35 @@ void main() {
     expect(await store.loadTranslation('book_store', 'en'), isNull);
     expect(await store.translatedLanguages(), isEmpty);
   });
+
+  test(
+    'persists a translation draft without counting it as a language',
+    () async {
+      final draft = TranslationDraft(
+        bookId: 'book_store',
+        sourceLanguage: 'zh',
+        targetLanguage: 'en',
+        providerId: 'youdao',
+        updatedAt: DateTime(2026, 11, 5, 8),
+        totalChunks: 4,
+        chunks: const {'chapter_0#0': SavedChunk(hash: 'abc', text: 'partial')},
+        failedKeys: const ['chapter_0#1'],
+      );
+      await store.saveDraft(draft);
+      await store.saveTranslation(_record());
+
+      final loaded = await store.loadDraft('book_store', 'en');
+      expect(loaded, isNotNull);
+      expect(loaded!.succeeded, 1);
+      expect(loaded.failedChunks, 1);
+      expect(loaded.chunks['chapter_0#0']?.text, 'partial');
+      expect(await store.translatedLanguages(), {'en'});
+
+      await store.deleteBook('book_store');
+      expect(await store.loadDraft('book_store', 'en'), isNull);
+      expect(await store.loadTranslation('book_store', 'en'), isNull);
+    },
+  );
 
   test('keeps unknown or corrupt entries out of the library', () async {
     await File(p.join(root.path, 'library.json')).writeAsString('[{}]');

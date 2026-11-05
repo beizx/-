@@ -3,6 +3,8 @@ package com.yiyue.translation_app
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.Settings
+import android.view.KeyEvent
 import android.view.WindowManager
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -25,7 +27,9 @@ import java.util.UUID
  */
 class MainActivity : AudioServiceActivity() {
     private var filesChannel: MethodChannel? = null
+    private var volumeChannel: MethodChannel? = null
     private var pendingImport: Map<String, String>? = null
+    private var captureVolumeKeys = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -40,9 +44,24 @@ class MainActivity : AudioServiceActivity() {
                         }
                         result.success(null)
                     }
+                    "openBackgroundSettings" -> result.success(openBackgroundSettings())
                     else -> result.notImplemented()
                 }
             }
+
+        volumeChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.yiyue.translation_app/volume")
+                .also { channel ->
+                    channel.setMethodCallHandler { call, result ->
+                        when (call.method) {
+                            "setCapture" -> {
+                                captureVolumeKeys = call.arguments as? Boolean == true
+                                result.success(null)
+                            }
+                            else -> result.notImplemented()
+                        }
+                    }
+                }
 
         filesChannel =
             MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.yiyue.translation_app/files")
@@ -61,6 +80,45 @@ class MainActivity : AudioServiceActivity() {
 
         // A cold start from QQ / a file manager arrives through this intent.
         handleIncomingIntent(intent)
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val isVolume =
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+                event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        if (captureVolumeKeys && isVolume) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                val direction = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) -1 else 1
+                volumeChannel?.invokeMethod("onVolumeKey", direction)
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Opens the system battery-optimization list when the ROM allows it, and
+     * falls back to this app's details page. Never requests the restricted
+     * ignore-battery-optimizations permission.
+     */
+    private fun openBackgroundSettings(): Boolean {
+        val battery = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val details = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName"),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(battery)
+            true
+        } catch (error: Exception) {
+            try {
+                startActivity(details)
+                true
+            } catch (fallback: Exception) {
+                false
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

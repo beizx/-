@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/theme/app_theme.dart';
 import '../core/utils/text_utils.dart';
@@ -10,14 +11,34 @@ import '../services/reader/reader_paginator.dart';
 
 TextStyle readerBodyStyle(ReaderPreferences reader) {
   return TextStyle(
-    fontFamily: reader.serif ? AppTheme.serif : null,
-    fontFamilyFallback: reader.serif ? AppTheme.serifFallback : null,
+    fontFamily: reader.typeface.fontFamily,
+    fontFamilyFallback: reader.typeface.fallback,
     fontSize: reader.fontSize,
     height: reader.lineHeight,
     fontWeight: reader.fontWeight.fontWeight,
     letterSpacing: 0.25,
     color: reader.skin.text,
   );
+}
+
+/// Lets the reader screen turn a page without rebuilding the chapter.
+class ReaderNavigationHandle {
+  void Function(int direction)? _turn;
+
+  void turn(int direction) => _turn?.call(direction);
+
+  void attach(void Function(int direction) turn) => _turn = turn;
+
+  void detach(void Function(int direction) turn) {
+    if (identical(_turn, turn)) _turn = null;
+  }
+}
+
+/// Volume up moves backward, volume down moves forward.
+int? volumeKeyDirection(LogicalKeyboardKey key) {
+  if (key == LogicalKeyboardKey.audioVolumeUp) return -1;
+  if (key == LogicalKeyboardKey.audioVolumeDown) return 1;
+  return null;
 }
 
 TextStyle readerTitleStyle(ReaderPreferences reader) {
@@ -46,6 +67,10 @@ class ReaderScrollView extends StatefulWidget {
     required this.onFractionChanged,
     required this.onToggleChrome,
     required this.hasNextChapter,
+    this.hasPreviousChapter = false,
+    this.onPreviousChapter,
+    this.onNextChapter,
+    this.navigation,
     this.highlight,
   });
 
@@ -58,6 +83,10 @@ class ReaderScrollView extends StatefulWidget {
   final ValueChanged<double> onFractionChanged;
   final VoidCallback onToggleChrome;
   final bool hasNextChapter;
+  final bool hasPreviousChapter;
+  final VoidCallback? onPreviousChapter;
+  final VoidCallback? onNextChapter;
+  final ReaderNavigationHandle? navigation;
 
   /// Utterance currently being read by the TTS engine.
   ///
@@ -86,7 +115,48 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
   void initState() {
     super.initState();
     _controller.addListener(_handleScroll);
+    widget.navigation?.attach(_turnBy);
     WidgetsBinding.instance.addPostFrameCallback((_) => _restore());
+  }
+
+  @override
+  void didUpdateWidget(ReaderScrollView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.navigation, widget.navigation)) {
+      oldWidget.navigation?.detach(_turnBy);
+      widget.navigation?.attach(_turnBy);
+    }
+  }
+
+  void _turnBy(int direction) {
+    final controller = _controller;
+    if (!controller.hasClients) {
+      _leaveChapter(direction);
+      return;
+    }
+    final position = controller.position;
+    final delta = position.viewportDimension * 0.92 * direction;
+    final target = (position.pixels + delta).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    if ((target - position.pixels).abs() < 12) {
+      _leaveChapter(direction);
+      return;
+    }
+    controller.animateTo(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _leaveChapter(int direction) {
+    if (direction < 0) {
+      if (widget.hasPreviousChapter) widget.onPreviousChapter?.call();
+    } else if (widget.hasNextChapter) {
+      widget.onNextChapter?.call();
+    }
   }
 
   void _syncParagraphs() {
@@ -124,6 +194,7 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
 
   @override
   void dispose() {
+    widget.navigation?.detach(_turnBy);
     _controller.dispose();
     super.dispose();
   }
@@ -156,79 +227,85 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                  Text(widget.chapterTitle, style: readerTitleStyle(reader)),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Container(
-                        width: 32,
-                        height: 2,
-                        color: skin.accent.withValues(alpha: 0.7),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.isTranslation
-                            ? '机器翻译 · 建议对照原文阅读'
-                            : '${formatCharacterCount(_charCount)}字',
-                        style: TextStyle(fontSize: 10.5, color: skin.secondary),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  if (_paragraphs.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 48),
-                      child: Center(
-                        child: Text(
-                          widget.isTranslation ? '这一章暂时没有译文' : '这一章没有正文',
-                          style: TextStyle(fontSize: 13, color: skin.secondary),
-                        ),
-                      ),
-                    )
-                  else
-                    for (final paragraph in _paragraphs)
-                      Padding(
-                        padding: EdgeInsets.only(
-                          bottom: reader.paragraphSpacing,
-                        ),
-                        child: ReaderHighlightedParagraph(
-                          text: paragraph,
-                          style: bodyStyle,
-                          align: align,
-                          highlight: widget.highlight,
-                          highlightColor: skin.accent.withValues(alpha: 0.28),
-                          highlightTextColor: skin.text,
-                        ),
-                      ),
-                  const SizedBox(height: 26),
-                  Center(
-                    child: Column(
+                    Text(widget.chapterTitle, style: readerTitleStyle(reader)),
+                    const SizedBox(height: 10),
+                    Row(
                       children: [
-                        Container(width: 36, height: 1, color: skin.line),
-                        const SizedBox(height: 10),
+                        Container(
+                          width: 32,
+                          height: 2,
+                          color: skin.accent.withValues(alpha: 0.7),
+                        ),
+                        const SizedBox(width: 8),
                         Text(
-                          '本章完',
+                          widget.isTranslation
+                              ? '机器翻译 · 建议对照原文阅读'
+                              : '${formatCharacterCount(_charCount)}字',
                           style: TextStyle(
                             fontSize: 10.5,
-                            letterSpacing: 3,
                             color: skin.secondary,
                           ),
                         ),
-                        if (widget.hasNextChapter) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '左右滑动进入下一章',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: skin.secondary.withValues(alpha: 0.7),
-                            ),
-                          ),
-                        ],
                       ],
                     ),
-                  ),
-                ],
-              ),
+                    const SizedBox(height: 20),
+                    if (_paragraphs.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 48),
+                        child: Center(
+                          child: Text(
+                            widget.isTranslation ? '这一章暂时没有译文' : '这一章没有正文',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: skin.secondary,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      for (final paragraph in _paragraphs)
+                        Padding(
+                          padding: EdgeInsets.only(
+                            bottom: reader.paragraphSpacing,
+                          ),
+                          child: ReaderHighlightedParagraph(
+                            text: paragraph,
+                            style: bodyStyle,
+                            align: align,
+                            highlight: widget.highlight,
+                            highlightColor: skin.accent.withValues(alpha: 0.28),
+                            highlightTextColor: skin.text,
+                          ),
+                        ),
+                    const SizedBox(height: 26),
+                    Center(
+                      child: Column(
+                        children: [
+                          Container(width: 36, height: 1, color: skin.line),
+                          const SizedBox(height: 10),
+                          Text(
+                            '本章完',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              letterSpacing: 3,
+                              color: skin.secondary,
+                            ),
+                          ),
+                          if (widget.hasNextChapter) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '左右滑动进入下一章',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: skin.secondary.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -346,6 +423,7 @@ class ReaderPageView extends StatefulWidget {
     required this.onPreviousChapter,
     required this.onNextChapter,
     this.selectable = false,
+    this.navigation,
     this.highlight,
   });
 
@@ -361,6 +439,7 @@ class ReaderPageView extends StatefulWidget {
   final bool hasNextChapter;
   final VoidCallback onPreviousChapter;
   final VoidCallback onNextChapter;
+  final ReaderNavigationHandle? navigation;
 
   /// Text selection is enabled while the toolbar is visible. The default
   /// immersive state keeps horizontal drags free for page turning.
@@ -394,10 +473,21 @@ class _ReaderPageViewState extends State<ReaderPageView> {
   void initState() {
     super.initState();
     _currentFraction = widget.initialFraction.clamp(0.0, 1.0);
+    widget.navigation?.attach(_turnPage);
+  }
+
+  @override
+  void didUpdateWidget(ReaderPageView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.navigation, widget.navigation)) {
+      oldWidget.navigation?.detach(_turnPage);
+      widget.navigation?.attach(_turnPage);
+    }
   }
 
   @override
   void dispose() {
+    widget.navigation?.detach(_turnPage);
     _controller?.dispose();
     super.dispose();
   }

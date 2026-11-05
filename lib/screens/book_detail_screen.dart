@@ -9,7 +9,9 @@ import '../core/utils/text_utils.dart';
 import '../models/book.dart';
 import '../models/language.dart';
 import '../models/reading_progress.dart';
+import '../models/translation_draft.dart';
 import '../services/export_service.dart';
+import '../services/translation/book_translator.dart';
 import '../services/translation/translation_engine.dart';
 import '../state/library_controller.dart';
 import '../state/settings_controller.dart';
@@ -35,6 +37,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   late AppLanguage _targetLanguage;
   late TranslationController _translationController;
   TranslationRecord? _record;
+  TranslationDraft? _draft;
   bool _initialized = false;
   bool _recordLoading = true;
   bool _starting = false;
@@ -59,21 +62,29 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     super.dispose();
   }
 
-  Future<void> _loadRecord() async {
+  Future<void> _loadRecord({bool silent = false}) async {
     final generation = ++_loadGeneration;
-    if (mounted) {
+    if (mounted && !silent) {
       setState(() {
         _recordLoading = true;
         _record = null;
+        _draft = null;
       });
     }
-    final record = await _translationController.loadTranslation(
-      widget.book.id,
-      _targetLanguage.code,
-    );
+    final results = await Future.wait<Object?>([
+      _translationController.loadTranslation(
+        widget.book.id,
+        _targetLanguage.code,
+        force: silent,
+      ),
+      _translationController.loadDraft(widget.book.id, _targetLanguage.code),
+    ]);
+    final record = results[0] as TranslationRecord?;
+    final draft = results[1] as TranslationDraft?;
     if (!mounted || generation != _loadGeneration) return;
     setState(() {
       _record = record;
+      _draft = draft != null && draft.hasWorkRemaining ? draft : null;
       _recordLoading = false;
     });
   }
@@ -150,7 +161,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     return context.read<SettingsController>().isCurrentProviderConfigured;
   }
 
-  Future<void> _startTranslation() async {
+  Future<void> _startTranslation({
+    bool resume = false,
+    bool retryFailuresOnly = false,
+  }) async {
     if (_starting || _recordLoading || _isThisBookTranslating) return;
     final translation = context.read<TranslationController>();
     if (translation.activeJob?.isRunning ?? false) {
@@ -160,7 +174,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     if (!await _ensureApiConfigured()) return;
     if (!mounted) return;
 
-    if (_record != null) {
+    if (!resume && _record?.complete == true) {
       final overwrite = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -198,16 +212,22 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         sourceLanguage: _sourceLanguage,
         targetLanguage: _targetLanguage,
         engine: engine,
+        resume: resume,
+        retryFailuresOnly: retryFailuresOnly,
       );
       if (!mounted) return;
       final job = translation.activeJob;
+      await _loadRecord(silent: true);
+      if (!mounted) return;
       if (record != null) {
-        setState(() => _record = record);
         _showMessage('《${widget.book.title}》翻译完成');
         translation.clearFinishedJob();
         await context.read<LibraryController>().refreshTranslatedLanguages();
       } else if (job?.status == TranslationJobStatus.cancelled) {
-        _showMessage('翻译已取消，原书与已有译文不受影响');
+        _showMessage('翻译已停止，已完成的段落已保留，可以继续翻译');
+        translation.clearFinishedJob();
+      } else if (job?.status == TranslationJobStatus.partial) {
+        _showMessage(job?.error ?? '部分段落未完成，可以继续翻译');
         translation.clearFinishedJob();
       } else {
         _showMessage(job?.error ?? '翻译失败，请稍后重试');
@@ -222,9 +242,19 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     }
   }
 
+  Future<void> _discardDraft() async {
+    if (_starting) return;
+    await _translationController.discardDraft(
+      widget.book.id,
+      _targetLanguage.code,
+    );
+    await _loadRecord(silent: true);
+    if (mounted) _showMessage('已放弃未完成的翻译进度');
+  }
+
   Future<void> _exportTranslation() async {
     final record = _record;
-    if (record == null || _exporting) return;
+    if (record == null || !record.complete || _exporting) return;
     final format = await showModalBottomSheet<ExportFormat>(
       context: context,
       builder: (context) => SafeArea(
@@ -656,7 +686,11 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           Row(
             children: [
               Text(
-                job.cancelRequested ? '正在停止…' : '正在翻译',
+                job.cancelRequested
+                    ? '正在停止…'
+                    : job.retryingFailures
+                    ? '正在重试失败段'
+                    : '正在翻译',
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -686,11 +720,22 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           ),
           const SizedBox(height: 9),
           Text(
-            '已完成 ${job.completedChunks} / ${job.totalChunks} 段 · ${job.currentChapterTitle}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
+            _jobDetail(job),
+            style: const TextStyle(
+              fontSize: 11.5,
+              height: 1.45,
+              color: AppColors.muted,
+            ),
           ),
+          if (job.currentChapterTitle.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              job.currentChapterTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
+            ),
+          ],
           const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: job.cancelRequested
@@ -705,6 +750,19 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     );
   }
 
+  String _jobDetail(TranslationJobState job) {
+    final parts = <String>[
+      '已译 ${job.completedChunks} / ${job.totalChunks} 段',
+      '剩余 ${job.remainingChunks} 段',
+    ];
+    if (job.failedChunks > 0) parts.add('失败 ${job.failedChunks} 段');
+    final eta = job.estimatedRemaining;
+    if (eta != null && job.isRunning && !job.cancelRequested) {
+      parts.add('预计还需 ${formatTranslationEta(eta)}');
+    }
+    return parts.join(' · ');
+  }
+
   Widget _buildActions(
     BuildContext context,
     SettingsController settings,
@@ -712,8 +770,11 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   ) {
     final disabled =
         _recordLoading || _starting || anotherJobRunning || _exporting;
+    final record = _record;
+    final draft = _draft;
+    final pending = draft != null && draft.hasWorkRemaining;
 
-    if (_record != null) {
+    if (record != null && record.complete && !pending) {
       return Column(
         key: const ValueKey('actions'),
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -742,7 +803,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               const SizedBox(width: 9),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: disabled ? null : _startTranslation,
+                  onPressed: disabled ? null : () => _startTranslation(),
                   icon: const Icon(Icons.refresh_rounded, size: 18),
                   label: const Text('重新翻译'),
                 ),
@@ -757,31 +818,62 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                 style: TextStyle(fontSize: 11, color: AppColors.gold),
               ),
             ),
-          if (anotherJobRunning)
-            const Padding(
-              padding: EdgeInsets.only(top: 10),
-              child: Text(
-                '另一本书正在翻译，完成或取消后才能开始新任务。',
-                style: TextStyle(fontSize: 11, color: AppColors.gold),
-              ),
-            ),
+          if (anotherJobRunning) _anotherJobNote(),
         ],
       );
     }
 
+    final retryOnly = draft?.onlyFailuresRemain ?? false;
     return Column(
-      key: const ValueKey('empty-actions'),
+      key: ValueKey(pending ? 'resume-actions' : 'empty-actions'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        FilledButton.icon(
-          onPressed: disabled ? null : _startTranslation,
-          icon: const Icon(Icons.auto_awesome_rounded, size: 19),
-          label: const Text('开始翻译'),
-        ),
+        if (record != null) ...[
+          FilledButton.icon(
+            onPressed: () => _openChapter(0),
+            icon: const Icon(Icons.chrome_reader_mode_outlined, size: 19),
+            label: Text(record.complete ? '阅读译文' : '阅读已译章节'),
+          ),
+          const SizedBox(height: 9),
+        ],
+        if (pending)
+          FilledButton.icon(
+            onPressed: disabled
+                ? null
+                : () => _startTranslation(
+                    resume: true,
+                    retryFailuresOnly: retryOnly,
+                  ),
+            icon: Icon(
+              retryOnly ? Icons.replay_rounded : Icons.play_arrow_rounded,
+              size: 19,
+            ),
+            label: Text(retryOnly ? '重试失败段' : '继续翻译'),
+          )
+        else
+          FilledButton.icon(
+            onPressed: disabled ? null : () => _startTranslation(),
+            icon: const Icon(Icons.auto_awesome_rounded, size: 19),
+            label: const Text('开始翻译'),
+          ),
+        if (record != null && record.complete) ...[
+          const SizedBox(height: 9),
+          OutlinedButton.icon(
+            onPressed: disabled ? null : () => _startTranslation(),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('重新翻译'),
+          ),
+        ],
         const SizedBox(height: 9),
         Text(
-          settings.isCurrentProviderConfigured
-              ? '整书按 1800 字符分段串行翻译，免费接口更稳定。'
+          pending
+              ? '已译 ${draft.succeeded} / ${draft.totalChunks} 段'
+                    '${draft.failedChunks > 0 ? ' · 失败 ${draft.failedChunks} 段' : ''}'
+                    '${draft.remainingChunks > 0 ? ' · 剩余 ${draft.remainingChunks} 段' : ''}'
+                    '。成功的段落会保留，不会整本重译。'
+                    '${record?.complete == true ? '完成后会替换当前译文。' : ''}'
+              : settings.isCurrentProviderConfigured
+              ? '整书按 1800 字符分段串行翻译。中途取消或失败都会留下进度，可以继续翻译。'
               : '开始后会引导你配置有道智云免费接口。',
           textAlign: TextAlign.center,
           style: const TextStyle(
@@ -790,16 +882,27 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             color: AppColors.muted,
           ),
         ),
-        if (anotherJobRunning)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text(
-              '另一本书正在翻译，请稍后再试。',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: AppColors.gold),
+        if (pending)
+          Align(
+            alignment: Alignment.center,
+            child: TextButton(
+              onPressed: disabled ? null : _discardDraft,
+              child: const Text('放弃这段进度'),
             ),
           ),
+        if (anotherJobRunning) _anotherJobNote(),
       ],
+    );
+  }
+
+  Widget _anotherJobNote() {
+    return const Padding(
+      padding: EdgeInsets.only(top: 8),
+      child: Text(
+        '另一本书正在翻译，完成或取消后才能开始新任务。',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 11, color: AppColors.gold),
+      ),
     );
   }
 
@@ -1361,6 +1464,7 @@ class _TranslationStamp extends StatelessWidget {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
+              '${record.complete ? '' : '部分'}'
               '${record.target.label}译文 · ${record.chapters.length} 章 · ${formatDateTime(record.createdAt)}',
               style: const TextStyle(fontSize: 11, color: AppColors.jade),
             ),

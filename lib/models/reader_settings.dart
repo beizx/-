@@ -127,6 +127,54 @@ enum ReaderTurnAnimation {
   }
 }
 
+/// System typefaces the reader can select without shipping font files.
+///
+/// A user-supplied font file is intentionally not offered here: loading an
+/// arbitrary file needs platform font registration that is easy to get wrong
+/// mid-chapter. These four families are resolved by the OS.
+enum ReaderTypeface {
+  serif('衬线体', '宋', 'serif', [
+    'Songti SC',
+    'STSong',
+    'Noto Serif CJK SC',
+    'Source Han Serif SC',
+    'Noto Serif',
+    'serif',
+  ]),
+  sans('无衬线', '黑', null, null),
+  mono('等宽', '等', 'monospace', [
+    'Menlo',
+    'Consolas',
+    'Noto Sans Mono',
+    'monospace',
+  ]),
+  condensed('窄黑体', '窄', 'sans-serif-condensed', [
+    'Roboto Condensed',
+    'PingFang SC',
+    'Noto Sans CJK SC',
+    'sans-serif',
+  ]);
+
+  const ReaderTypeface(
+    this.label,
+    this.preview,
+    this.fontFamily,
+    this.fallback,
+  );
+
+  final String label;
+  final String preview;
+  final String? fontFamily;
+  final List<String>? fallback;
+
+  static ReaderTypeface byName(String? name) {
+    return values.firstWhere(
+      (face) => face.name == name,
+      orElse: () => ReaderTypeface.serif,
+    );
+  }
+}
+
 /// Immutable reader preferences, persisted as a single JSON object.
 ///
 /// Defaults follow the app's own deep blue-purple night theme; the layout
@@ -136,7 +184,7 @@ class ReaderPreferences {
     this.fontSize = 18.0,
     this.lineHeight = 1.95,
     this.skin = ReaderSkin.night,
-    this.serif = true,
+    this.typeface = ReaderTypeface.serif,
     this.mode = ReaderMode.scroll,
     this.fontWeight = ReaderFontWeight.regular,
     this.paragraphSpacing = 12.0,
@@ -153,6 +201,7 @@ class ReaderPreferences {
     this.showProgress = true,
     this.showPageNumber = true,
     this.justify = true,
+    this.volumeKeysTurnPages = false,
   });
 
   static const minFontSize = 14.0;
@@ -171,7 +220,7 @@ class ReaderPreferences {
   final double fontSize;
   final double lineHeight;
   final ReaderSkin skin;
-  final bool serif;
+  final ReaderTypeface typeface;
   final ReaderMode mode;
   final ReaderFontWeight fontWeight;
   final double paragraphSpacing;
@@ -189,12 +238,18 @@ class ReaderPreferences {
   final bool showPageNumber;
   final bool justify;
 
+  /// When true, volume up/down turns pages while the reader is focused.
+  /// Off by default so the keys keep controlling system volume.
+  final bool volumeKeysTurnPages;
+
+  bool get serif => typeface == ReaderTypeface.serif;
+
   /// Style-only fingerprint used to invalidate pagination caches.
   String get layoutSignature => [
     fontSize.toStringAsFixed(1),
     lineHeight.toStringAsFixed(2),
     fontWeight.value,
-    serif ? 'serif' : 'sans',
+    typeface.name,
     firstLineIndent.toStringAsFixed(1),
     justify ? 'justify' : 'start',
   ].join('|');
@@ -204,7 +259,7 @@ class ReaderPreferences {
       fontSize: fontSize.clamp(minFontSize, maxFontSize),
       lineHeight: lineHeight.clamp(minLineHeight, maxLineHeight),
       skin: skin,
-      serif: serif,
+      typeface: typeface,
       mode: mode,
       fontWeight: fontWeight,
       paragraphSpacing: paragraphSpacing.clamp(
@@ -230,6 +285,7 @@ class ReaderPreferences {
       showProgress: showProgress,
       showPageNumber: showPageNumber,
       justify: justify,
+      volumeKeysTurnPages: volumeKeysTurnPages,
     );
   }
 
@@ -238,6 +294,7 @@ class ReaderPreferences {
     'lineHeight': lineHeight,
     'skin': skin.name,
     'serif': serif,
+    'typeface': typeface.name,
     'mode': mode.name,
     'fontWeight': fontWeight.name,
     'paragraphSpacing': paragraphSpacing,
@@ -254,6 +311,7 @@ class ReaderPreferences {
     'showProgress': showProgress,
     'showPageNumber': showPageNumber,
     'justify': justify,
+    'volumeKeysTurnPages': volumeKeysTurnPages,
   };
 
   factory ReaderPreferences.fromJson(Map<String, Object?> json) {
@@ -268,11 +326,18 @@ class ReaderPreferences {
       return value is bool ? value : fallback;
     }
 
+    final storedTypeface = json['typeface'] as String?;
+    final typeface = storedTypeface == null
+        ? (flag('serif', defaults.serif)
+              ? ReaderTypeface.serif
+              : ReaderTypeface.sans)
+        : ReaderTypeface.byName(storedTypeface);
+
     return ReaderPreferences(
       fontSize: number('fontSize', defaults.fontSize),
       lineHeight: number('lineHeight', defaults.lineHeight),
       skin: ReaderSkin.byName(json['skin'] as String?),
-      serif: flag('serif', defaults.serif),
+      typeface: typeface,
       mode: ReaderMode.byName(json['mode'] as String?),
       fontWeight: ReaderFontWeight.byName(json['fontWeight'] as String?),
       paragraphSpacing: number('paragraphSpacing', defaults.paragraphSpacing),
@@ -291,6 +356,10 @@ class ReaderPreferences {
       showProgress: flag('showProgress', defaults.showProgress),
       showPageNumber: flag('showPageNumber', defaults.showPageNumber),
       justify: flag('justify', defaults.justify),
+      volumeKeysTurnPages: flag(
+        'volumeKeysTurnPages',
+        defaults.volumeKeysTurnPages,
+      ),
     ).normalized();
   }
 
@@ -300,7 +369,7 @@ class ReaderPreferences {
       other.fontSize == fontSize &&
       other.lineHeight == lineHeight &&
       other.skin == skin &&
-      other.serif == serif &&
+      other.typeface == typeface &&
       other.mode == mode &&
       other.fontWeight == fontWeight &&
       other.paragraphSpacing == paragraphSpacing &&
@@ -316,14 +385,15 @@ class ReaderPreferences {
       other.showChapterTitle == showChapterTitle &&
       other.showProgress == showProgress &&
       other.showPageNumber == showPageNumber &&
-      other.justify == justify;
+      other.justify == justify &&
+      other.volumeKeysTurnPages == volumeKeysTurnPages;
 
   @override
   int get hashCode => Object.hashAll([
     fontSize,
     lineHeight,
     skin,
-    serif,
+    typeface,
     mode,
     fontWeight,
     paragraphSpacing,
@@ -340,13 +410,14 @@ class ReaderPreferences {
     showProgress,
     showPageNumber,
     justify,
+    volumeKeysTurnPages,
   ]);
 
   ReaderPreferences copyWith({
     double? fontSize,
     double? lineHeight,
     ReaderSkin? skin,
-    bool? serif,
+    ReaderTypeface? typeface,
     ReaderMode? mode,
     ReaderFontWeight? fontWeight,
     double? paragraphSpacing,
@@ -363,12 +434,13 @@ class ReaderPreferences {
     bool? showProgress,
     bool? showPageNumber,
     bool? justify,
+    bool? volumeKeysTurnPages,
   }) {
     return ReaderPreferences(
       fontSize: fontSize ?? this.fontSize,
       lineHeight: lineHeight ?? this.lineHeight,
       skin: skin ?? this.skin,
-      serif: serif ?? this.serif,
+      typeface: typeface ?? this.typeface,
       mode: mode ?? this.mode,
       fontWeight: fontWeight ?? this.fontWeight,
       paragraphSpacing: paragraphSpacing ?? this.paragraphSpacing,
@@ -385,6 +457,7 @@ class ReaderPreferences {
       showProgress: showProgress ?? this.showProgress,
       showPageNumber: showPageNumber ?? this.showPageNumber,
       justify: justify ?? this.justify,
+      volumeKeysTurnPages: volumeKeysTurnPages ?? this.volumeKeysTurnPages,
     );
   }
 }

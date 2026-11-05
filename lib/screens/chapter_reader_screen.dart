@@ -10,6 +10,7 @@ import '../core/utils/text_utils.dart';
 import '../models/book.dart';
 import '../models/bookmark.dart';
 import '../models/reader_settings.dart';
+import '../services/reader/background_playback_guide.dart';
 import '../services/reader/reader_system.dart';
 import '../state/library_controller.dart';
 import '../state/settings_controller.dart';
@@ -71,6 +72,12 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
   /// Sentence being spoken, delivered outside the widget cache so 听书 does not
   /// rebuild the chapter on every utterance.
   final ValueNotifier<String?> _highlight = ValueNotifier<String?>(null);
+  final ReaderNavigationHandle _navigation = ReaderNavigationHandle();
+  final FocusNode _readerFocus = FocusNode(debugLabel: 'reader');
+  DateTime? _lastVolumeAt;
+  int? _lastVolumeDirection;
+  bool _volumeCapture = false;
+  bool _shownTtsFailureGuide = false;
 
   @override
   void initState() {
@@ -83,6 +90,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     _fraction = ValueNotifier<double>(0);
     WidgetsBinding.instance.addObserver(this);
     _ticker = Timer.periodic(const Duration(seconds: 1), _tick);
+    ReaderSystem.bindVolumeKeys(_onVolumeKey);
   }
 
   @override
@@ -137,6 +145,10 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     // Only the 听书 button state depends on play/pause; the spoken sentence is
     // pushed through [_highlight] so the chapter itself is never rebuilt.
     if (tts.isPlaying != wasPlaying) setState(() {});
+    if (tts.status == TtsStatus.error && !_shownTtsFailureGuide) {
+      _shownTtsFailureGuide = true;
+      unawaited(_maybeShowBackgroundGuide(becauseFailed: true));
+    }
   }
 
   void _syncHighlight() {
@@ -163,10 +175,15 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     _ticker?.cancel();
     unawaited(_persistProgress(force: true));
     unawaited(ReaderSystem.keepScreenOn(false));
+    if (_volumeCapture) {
+      unawaited(ReaderSystem.setVolumeKeyCapture(false));
+    }
+    ReaderSystem.bindVolumeKeys(null);
     _restoreSystemChrome();
     _chapterController.dispose();
     _fraction.dispose();
     _highlight.dispose();
+    _readerFocus.dispose();
     super.dispose();
   }
 
@@ -394,12 +411,14 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
         _index,
         chapterFraction: _fraction.value,
       );
+      if (mounted) await _maybeShowBackgroundGuide();
     }
     if (!mounted) return;
     await showTtsPlayerSheet(context, book: widget.book);
   }
 
-  Future<void> _openReaderSettings() async {    HapticFeedback.selectionClick();
+  Future<void> _openReaderSettings() async {
+    HapticFeedback.selectionClick();
     var current = _readerPrefs;
     await showModalBottomSheet<void>(
       context: context,
@@ -455,28 +474,80 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       });
     }
 
+    final routeCurrent = ModalRoute.of(context)?.isCurrent ?? false;
+    _syncVolumeCapture(reader.volumeKeysTurnPages && routeCurrent);
+
     return PopScope(
       canPop: _chromeVisible,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop && !_chromeVisible) _toggleChrome();
       },
-      child: AnnotatedRegion<SystemUiOverlayStyle>(
-        value: skin.isDark ? appSystemOverlayStyle : _lightOverlayStyle,
-        child: Scaffold(
-          backgroundColor: skin.background,
-          body: Stack(
-            children: [
-              Positioned.fill(
-                child: _memoizedContent(reader, contentPadding),
-              ),
-              if (indicatorsEnabled) _buildIndicators(reader, inset),
-              if (_hasTranslation) _buildLanguageSwitch(reader, inset),
-              _buildTopBar(reader, inset),
-              _buildBottomBar(reader, inset),
-            ],
+      child: Focus(
+        focusNode: _readerFocus,
+        autofocus: true,
+        onKeyEvent: _handleReaderKey,
+        child: AnnotatedRegion<SystemUiOverlayStyle>(
+          value: skin.isDark ? appSystemOverlayStyle : _lightOverlayStyle,
+          child: Scaffold(
+            backgroundColor: skin.background,
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: _memoizedContent(reader, contentPadding),
+                ),
+                if (indicatorsEnabled) _buildIndicators(reader, inset),
+                if (_hasTranslation) _buildLanguageSwitch(reader, inset),
+                _buildTopBar(reader, inset),
+                _buildBottomBar(reader, inset),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  KeyEventResult _handleReaderKey(FocusNode node, KeyEvent event) {
+    if (!_reader.volumeKeysTurnPages || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final direction = volumeKeyDirection(event.logicalKey);
+    if (direction == null) return KeyEventResult.ignored;
+    _onVolumeKey(direction);
+    return KeyEventResult.handled;
+  }
+
+  void _onVolumeKey(int direction) {
+    if (!mounted || !_reader.volumeKeysTurnPages) return;
+    if (!(ModalRoute.of(context)?.isCurrent ?? false)) return;
+    final now = DateTime.now();
+    final previous = _lastVolumeAt;
+    // Collapse the native channel and the Flutter key event for the same
+    // press. A different direction is always honored so up/down stay distinct.
+    if (previous != null &&
+        _lastVolumeDirection == direction &&
+        now.difference(previous) < const Duration(milliseconds: 180)) {
+      return;
+    }
+    _lastVolumeAt = now;
+    _lastVolumeDirection = direction;
+    _navigation.turn(direction);
+  }
+
+  void _syncVolumeCapture(bool enabled) {
+    if (_volumeCapture == enabled) return;
+    _volumeCapture = enabled;
+    unawaited(ReaderSystem.setVolumeKeyCapture(enabled));
+  }
+
+  Future<void> _maybeShowBackgroundGuide({bool becauseFailed = false}) async {
+    final settings = _settings;
+    if (!mounted || settings == null) return;
+    await BackgroundPlaybackGuide.maybeShow(
+      context,
+      dismissedForever: settings.backgroundPlaybackGuideDismissed,
+      onDismissForever: settings.dismissBackgroundPlaybackGuide,
+      becauseFailed: becauseFailed,
     );
   }
 
@@ -544,6 +615,14 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
             onFractionChanged: (value) => _onFractionChanged(index, value),
             onToggleChrome: _toggleChrome,
             hasNextChapter: index < _chapterCount - 1,
+            hasPreviousChapter: index > 0,
+            navigation: index == _index ? _navigation : null,
+            onPreviousChapter: () {
+              if (index > 0) _goToChapter(index - 1, toStart: false);
+            },
+            onNextChapter: () {
+              if (index < _chapterCount - 1) _goToChapter(index + 1);
+            },
             highlight: index == _index ? _highlight : null,
           );
         },
@@ -570,6 +649,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       hasNextChapter: _index < _chapterCount - 1,
       selectable: _chromeVisible,
       highlight: _highlight,
+      navigation: _navigation,
       onPreviousChapter: () {
         if (_index > 0) _goToChapter(_index - 1, toStart: false);
       },

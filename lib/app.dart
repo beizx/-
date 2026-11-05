@@ -11,6 +11,7 @@ import 'screens/app_settings_screen.dart';
 import 'screens/library_screen.dart';
 import 'services/import/book_importer.dart';
 import 'services/import/external_file_service.dart';
+import 'services/reader/background_playback_guide.dart';
 import 'state/library_controller.dart';
 import 'state/settings_controller.dart';
 import 'state/translation_controller.dart';
@@ -73,16 +74,59 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
   late final ExternalFileService _externalFiles = ExternalFileService();
+  TtsController? _tts;
+  bool _ttsActive = false;
 
   @override
   void initState() {
     super.initState();
     _externalFiles.bind(_handleIncomingFile);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _noteInterruptedPlayback();
       final pending = await _externalFiles.takePending();
       if (pending != null) await _handleIncomingFile(pending);
       await _externalFiles.flushQueue();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final tts = context.read<TtsController>();
+    if (!identical(_tts, tts)) {
+      _tts?.removeListener(_rememberListening);
+      _tts = tts;
+      _ttsActive = tts.isActive;
+      tts.addListener(_rememberListening);
+    }
+  }
+
+  @override
+  void dispose() {
+    _tts?.removeListener(_rememberListening);
+    super.dispose();
+  }
+
+  void _rememberListening() {
+    final tts = _tts;
+    final settings = context.read<SettingsController>();
+    if (tts == null || tts.isActive == _ttsActive) return;
+    _ttsActive = tts.isActive;
+    unawaited(settings.setTtsWasActive(_ttsActive));
+  }
+
+  Future<void> _noteInterruptedPlayback() async {
+    if (!mounted) return;
+    final settings = context.read<SettingsController>();
+    if (!settings.ttsWasActive) return;
+    await settings.setTtsWasActive(false);
+    if (!mounted) return;
+    await BackgroundPlaybackGuide.maybeShow(
+      context,
+      dismissedForever: settings.backgroundPlaybackGuideDismissed,
+      onDismissForever: settings.dismissBackgroundPlaybackGuide,
+      becauseInterrupted: true,
+    );
   }
 
   /// Imports a document another app opened with us and jumps to the shelf.

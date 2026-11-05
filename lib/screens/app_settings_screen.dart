@@ -97,7 +97,7 @@ class AppSettingsScreen extends StatelessWidget {
                   subtitle:
                       '字号 ${reader.fontSize.round()} · '
                       '${reader.mode.label} · ${reader.skin.label} '
-                      '· ${reader.serif ? '衬线体' : '无衬线'}',
+                      '· ${reader.typeface.label}',
                   trailing: const Icon(
                     Icons.chevron_right_rounded,
                     size: 19,

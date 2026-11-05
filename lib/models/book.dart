@@ -187,6 +187,7 @@ class TranslationRecord {
     required this.providerId,
     required this.createdAt,
     required this.chapters,
+    this.complete = true,
   });
 
   final String bookId;
@@ -195,6 +196,10 @@ class TranslationRecord {
   final String providerId;
   final DateTime createdAt;
   final List<TranslatedChapter> chapters;
+
+  /// False while some chapters are still missing. Old files omit the field
+  /// and are treated as finished translations.
+  final bool complete;
 
   AppLanguage get target => Languages.byCode(targetLanguage);
   AppLanguage get source =>
@@ -213,6 +218,7 @@ class TranslationRecord {
     'targetLanguage': targetLanguage,
     'providerId': providerId,
     'createdAt': createdAt.toIso8601String(),
+    'complete': complete,
     'chapters': chapters.map((chapter) => chapter.toJson()).toList(),
   };
 
@@ -235,6 +241,7 @@ class TranslationRecord {
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       chapters: chapters,
+      complete: json['complete'] is bool ? json['complete'] as bool : true,
     );
   }
 }

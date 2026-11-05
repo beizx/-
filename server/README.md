@@ -43,8 +43,10 @@ go build -trimpath -ldflags="-s -w" -o bin/reader-server ./cmd/server
 | `GATEWAY_TOKEN` | 空 | 非空时所有 `/v1/*` 都需要 `Authorization: Bearer <token>` 或 `X-API-Token` |
 | `YOUDAO_APP_KEY` | 空 | 有道应用 ID；为空时 `/v1/translate` 返回 503 |
 | `YOUDAO_APP_SECRET` | 空 | 有道应用密钥 |
-| `GATEWAY_CACHE_ENTRIES` | `512` | 译文缓存条数上限（TTL + LRU）；`0` 关闭缓存 |
+| `GATEWAY_CACHE_ENTRIES` | `512` | 译文缓存条数上限（内存 LRU，也是磁盘文件上限）；`0` 关闭缓存 |
 | `GATEWAY_CACHE_TTL_SECONDS` | `3600` | 译文缓存有效期（秒）；`0` 关闭缓存 |
+| `GATEWAY_CACHE_DISK` | `true` | 是否把成功译文写到磁盘，进程重启后仍能命中 |
+| `GATEWAY_CACHE_DIR` | `cache/translations` | 磁盘缓存目录；`GATEWAY_CACHE_DISK=false` 时忽略 |
 | `PROXY_ENABLED` | `true` | 是否启用代理池 |
 | `PROXY_TARGET` | `20` | 代理队列目标长度 |
 | `PROXY_CHECK_URL` | `https://www.baidu.com/robots.txt` | 校验代理时请求的地址 |
@@ -61,7 +63,7 @@ go build -trimpath -ldflags="-s -w" -o bin/reader-server ./cmd/server
 无需鉴权，用于探活与反向代理健康检查。
 
 ```json
-{"status":"ok","time":"2026-11-05T01:03:31Z","version":"1.1.0","proxyPoolSize":12,"translateCache":{"entries":8,"hits":31,"misses":9,"evictions":0,"expired":2}}
+{"status":"ok","time":"2026-11-05T01:03:31Z","version":"1.1.1","proxyPoolSize":12,"translateCache":{"entries":8,"hits":31,"misses":9,"evictions":0,"expired":2,"diskHits":4,"diskWrites":9,"diskEntries":8}}
 ```
 
 `translateCache` 只在缓存开启时出现；`entries` 是当前缓存条数，`hits` / `misses` / `evictions` / `expired` 是累计计数。
@@ -78,7 +80,7 @@ go build -trimpath -ldflags="-s -w" -o bin/reader-server ./cmd/server
 - `from` 缺省 `auto`，`to` 缺省 `zh-CHS`。
 - 单次最多 20000 字符，上游单次最多 4800 字符（自动截断，和 App 的分块策略一致）。
 - 上游错误码会映射为 HTTP 状态：`108/110` → 401，`411/412` → 429，`401` → 402，其余 → 502，响应体保留 `code`。
-- **缓存**：成功译文按 `(from, to, text)` 的 SHA-256 进入 TTL + LRU 缓存，命中时不消耗有道额度；响应头 `X-Cache: hit|miss` 说明本次结果来源。同一段的并发请求会合并成一次上游调用，失败结果永不缓存，避免限频错误被记住。
+- **缓存**：成功译文按 `(from, to, text)` 的 SHA-256 进入内存 TTL + LRU，并默认写到 `GATEWAY_CACHE_DIR`（进程重启后仍能命中）。内存未命中会回读磁盘并提升进 LRU。响应头 `X-Cache: hit|miss` 说明本次结果来源。同一段的并发请求会合并成一次上游调用，失败结果永不缓存。设 `GATEWAY_CACHE_DISK=false` 可只保留内存缓存；`GATEWAY_CACHE_ENTRIES` 或 `GATEWAY_CACHE_TTL_SECONDS` 为 0 时整层关闭。
 
 ```bash
 curl -s http://127.0.0.1:8080/v1/translate \
@@ -112,6 +114,7 @@ server/
 ├── internal/gateway/             # 有道 v3 签名与翻译
 │   ├── youdao.go                 # 签名、请求、错误码映射
 │   ├── cache.go                  # TTL + LRU 译文缓存（含并发合并）
+│   ├── cache_disk.go             # 文件缓存，重启后仍能命中
 │   └── translate_handler.go      # POST /v1/translate
 └── internal/httpapi/router.go    # 路由、鉴权、CORS、panic 兜底
 ```
