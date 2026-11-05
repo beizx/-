@@ -21,7 +21,17 @@ abstract final class TranslationProviders {
     available: true,
   );
 
-  static const List<TranslationProviderInfo> availableProviders = [youdao];
+  static const gateway = TranslationProviderInfo(
+    id: 'gateway',
+    name: '自建 Go 网关',
+    description: '仓库内 server/ 目录的 Go 服务代签有道请求，密钥不下发到手机',
+    available: true,
+  );
+
+  static const List<TranslationProviderInfo> availableProviders = [
+    youdao,
+    gateway,
+  ];
 
   static const List<TranslationProviderInfo> plannedProviders = [
     TranslationProviderInfo(

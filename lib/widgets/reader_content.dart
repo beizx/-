@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/theme/app_theme.dart';
@@ -45,6 +46,7 @@ class ReaderScrollView extends StatefulWidget {
     required this.onFractionChanged,
     required this.onToggleChrome,
     required this.hasNextChapter,
+    this.highlight,
   });
 
   final String chapterTitle;
@@ -57,6 +59,12 @@ class ReaderScrollView extends StatefulWidget {
   final VoidCallback onToggleChrome;
   final bool hasNextChapter;
 
+  /// Utterance currently being read by the TTS engine.
+  ///
+  /// A listenable instead of a plain string: the reader no longer rebuilds the
+  /// whole chapter when the spoken sentence advances.
+  final ValueListenable<String?>? highlight;
+
   @override
   State<ReaderScrollView> createState() => _ReaderScrollViewState();
 }
@@ -66,11 +74,32 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
   Offset? _downPosition;
   bool _restored = false;
 
+  /// Paragraph splitting is pure and relatively expensive on long chapters, so
+  /// it is cached instead of running on every build.
+  List<String> _paragraphs = const [];
+  String _paragraphKey = '';
+
+  /// `text.runes.length` is O(n); the chapter header shows it on every build.
+  int _charCount = 0;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_handleScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _restore());
+  }
+
+  void _syncParagraphs() {
+    final key =
+        '${widget.text.length}-${widget.text.hashCode}-'
+        '${widget.reader.firstLineIndent}';
+    if (key == _paragraphKey) return;
+    _paragraphKey = key;
+    _paragraphs = ReaderPaginator.displayParagraphs(
+      widget.text,
+      firstLineIndent: widget.reader.firstLineIndent,
+    );
+    _charCount = widget.text.runes.length;
   }
 
   void _restore() {
@@ -101,12 +130,9 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
 
   @override
   Widget build(BuildContext context) {
+    _syncParagraphs();
     final reader = widget.reader;
     final skin = reader.skin;
-    final paragraphs = ReaderPaginator.displayParagraphs(
-      widget.text,
-      firstLineIndent: reader.firstLineIndent,
-    );
     final bodyStyle = readerBodyStyle(reader);
     final align = reader.justify ? TextAlign.justify : TextAlign.start;
 
@@ -125,10 +151,11 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
-            child: SelectionArea(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child: RepaintBoundary(
+              child: SelectionArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                   Text(widget.chapterTitle, style: readerTitleStyle(reader)),
                   const SizedBox(height: 10),
                   Row(
@@ -142,13 +169,13 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
                       Text(
                         widget.isTranslation
                             ? '机器翻译 · 建议对照原文阅读'
-                            : '${formatCharacterCount(widget.text.runes.length)}字',
+                            : '${formatCharacterCount(_charCount)}字',
                         style: TextStyle(fontSize: 10.5, color: skin.secondary),
                       ),
                     ],
                   ),
                   const SizedBox(height: 20),
-                  if (paragraphs.isEmpty)
+                  if (_paragraphs.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 48),
                       child: Center(
@@ -159,15 +186,18 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
                       ),
                     )
                   else
-                    for (final paragraph in paragraphs)
+                    for (final paragraph in _paragraphs)
                       Padding(
                         padding: EdgeInsets.only(
                           bottom: reader.paragraphSpacing,
                         ),
-                        child: Text(
-                          paragraph,
+                        child: ReaderHighlightedParagraph(
+                          text: paragraph,
                           style: bodyStyle,
-                          textAlign: align,
+                          align: align,
+                          highlight: widget.highlight,
+                          highlightColor: skin.accent.withValues(alpha: 0.28),
+                          highlightTextColor: skin.text,
                         ),
                       ),
                   const SizedBox(height: 26),
@@ -199,10 +229,101 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
                   ),
                 ],
               ),
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Renders one paragraph, optionally highlighting the sentence being read.
+///
+/// The highlight is a plain substring match: TTS utterances are whole
+/// paragraphs or punctuation-bounded slices of one, so a match is the common
+/// case and the fallback (no highlight) is invisible to the reader.
+Widget readerParagraphText(
+  String paragraph, {
+  required TextStyle style,
+  required TextAlign align,
+  String? highlightText,
+  Color? highlightColor,
+  Color? highlightTextColor,
+}) {
+  final needle = highlightText?.trim() ?? '';
+  if (needle.isEmpty) {
+    return Text(paragraph, style: style, textAlign: align);
+  }
+  final index = paragraph.indexOf(needle);
+  if (index < 0) {
+    return Text(paragraph, style: style, textAlign: align);
+  }
+  return Text.rich(
+    TextSpan(
+      children: [
+        if (index > 0) TextSpan(text: paragraph.substring(0, index)),
+        TextSpan(
+          text: needle,
+          style: TextStyle(
+            color: highlightTextColor,
+            backgroundColor: highlightColor,
+          ),
+        ),
+        if (index + needle.length < paragraph.length)
+          TextSpan(text: paragraph.substring(index + needle.length)),
+      ],
+    ),
+    style: style,
+    textAlign: align,
+  );
+}
+
+/// One paragraph that only re-lays itself out when the spoken sentence moves
+/// into it.
+///
+/// The plain [Text] is built once and handed to the [ValueListenableBuilder] as
+/// `child`. When the highlight does not belong to this paragraph the very same
+/// widget instance is returned, and Flutter skips the rebuild — so 听书 costs
+/// one paragraph per sentence instead of the whole chapter.
+class ReaderHighlightedParagraph extends StatelessWidget {
+  const ReaderHighlightedParagraph({
+    super.key,
+    required this.text,
+    required this.style,
+    required this.align,
+    required this.highlight,
+    this.highlightColor,
+    this.highlightTextColor,
+  });
+
+  final String text;
+  final TextStyle style;
+  final TextAlign align;
+  final ValueListenable<String?>? highlight;
+  final Color? highlightColor;
+  final Color? highlightTextColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final plain = Text(text, style: style, textAlign: align);
+    final listenable = highlight;
+    if (listenable == null) return plain;
+    return ValueListenableBuilder<String?>(
+      valueListenable: listenable,
+      child: plain,
+      builder: (context, value, child) {
+        final needle = value?.trim() ?? '';
+        if (needle.isEmpty || !text.contains(needle)) return child!;
+        return readerParagraphText(
+          text,
+          style: style,
+          align: align,
+          highlightText: needle,
+          highlightColor: highlightColor,
+          highlightTextColor: highlightTextColor,
+        );
+      },
     );
   }
 }
@@ -225,6 +346,7 @@ class ReaderPageView extends StatefulWidget {
     required this.onPreviousChapter,
     required this.onNextChapter,
     this.selectable = false,
+    this.highlight,
   });
 
   final String chapterTitle;
@@ -244,6 +366,9 @@ class ReaderPageView extends StatefulWidget {
   /// immersive state keeps horizontal drags free for page turning.
   final bool selectable;
 
+  /// Sentence being read aloud, highlighted in place.
+  final ValueListenable<String?>? highlight;
+
   @override
   State<ReaderPageView> createState() => _ReaderPageViewState();
 }
@@ -255,6 +380,15 @@ class _ReaderPageViewState extends State<ReaderPageView> {
   int _currentPage = 0;
   double _currentFraction = 0;
   bool _switchingChapter = false;
+
+  /// `text.runes.length` is O(n); the header shows it on every build.
+  int _charCount = 0;
+  String _charCountKey = '';
+
+  /// Title height only depends on the title, typography, width and text scale,
+  /// so the TextPainter run is cached instead of repeated on every build.
+  double _titleHeight = 0;
+  String _titleHeightKey = '';
 
   @override
   void initState() {
@@ -461,6 +595,17 @@ class _ReaderPageViewState extends State<ReaderPageView> {
     TextScaler textScaler,
   ) {
     if (widget.chapterTitle.trim().isEmpty) return 0;
+    final key = [
+      widget.chapterTitle,
+      maxWidth.toStringAsFixed(1),
+      style.fontSize?.toStringAsFixed(1) ?? '',
+      style.height?.toStringAsFixed(2) ?? '',
+      style.fontWeight?.value ?? 0,
+      style.fontFamily ?? '',
+      textScaler.scale(1).toStringAsFixed(3),
+    ].join('#');
+    if (key == _titleHeightKey) return _titleHeight;
+
     final painter = TextPainter(
       text: TextSpan(text: widget.chapterTitle, style: style),
       textDirection: TextDirection.ltr,
@@ -468,9 +613,18 @@ class _ReaderPageViewState extends State<ReaderPageView> {
       maxLines: 3,
       ellipsis: '…',
     )..layout(maxWidth: maxWidth);
-    final height = painter.height;
+    _titleHeight = painter.height;
+    _titleHeightKey = key;
     painter.dispose();
-    return height;
+    return _titleHeight;
+  }
+
+  int _charCountFor(String text) {
+    if (!identical(_charCountKey, text)) {
+      _charCountKey = text;
+      _charCount = text.runes.length;
+    }
+    return _charCount;
   }
 
   @override
@@ -580,7 +734,7 @@ class _ReaderPageViewState extends State<ReaderPageView> {
                 Text(
                   widget.isTranslation
                       ? '机器翻译 · 建议对照原文阅读'
-                      : '${formatCharacterCount(widget.text.runes.length)}字',
+                      : '${formatCharacterCount(_charCountFor(widget.text))}字',
                   style: TextStyle(fontSize: 10.5, color: skin.secondary),
                 ),
               ],
@@ -599,10 +753,13 @@ class _ReaderPageViewState extends State<ReaderPageView> {
         fragments.add(SizedBox(height: reader.paragraphSpacing));
       }
       fragments.add(
-        Text(
-          fragment.textOf(_pagination.displayParagraphs),
+        ReaderHighlightedParagraph(
+          text: fragment.textOf(_pagination.displayParagraphs),
           style: bodyStyle,
-          textAlign: align,
+          align: align,
+          highlight: widget.highlight,
+          highlightColor: skin.accent.withValues(alpha: 0.28),
+          highlightTextColor: skin.text,
         ),
       );
     }
@@ -631,9 +788,11 @@ class _ReaderPageViewState extends State<ReaderPageView> {
                   maxHeight: double.infinity,
                   child: SizedBox(
                     width: contentWidth,
-                    child: widget.selectable
-                        ? SelectionArea(child: pageBody)
-                        : pageBody,
+                    child: RepaintBoundary(
+                      child: widget.selectable
+                          ? SelectionArea(child: pageBody)
+                          : pageBody,
+                    ),
                   ),
                 ),
               ),

@@ -1,7 +1,7 @@
 # Beizx的阅读器 · 产品文档
 
-> 版本：v1.3.0（阅读器重构与阅读优先）
-> 更新时间：2026-11-04
+> 版本：v1.4.1（锁屏媒体控制 · 后台播放 · 网关译文缓存 · 阅读流畅度）
+> 更新时间：2026-11-05
 > 平台：Android / iOS（Flutter）
 > 应用显示名称：Beizx的阅读器
 
@@ -28,19 +28,23 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 ### 1.3 目标用户
 
 1. 阅读中、日、韩、英小说的读者，主要诉求是导入本地文件后舒服地读完一整本。
-2. 习惯在手机上阅读网络小说 / 轻小说，需要翻页模式、书签、目录搜索和精确续读的读者。
-3. 想把整本书转成母语，但希望翻译只是「需要时才打开」的附加能力。
-4. 拥有免费翻译 API 额度，希望在自己的手机上完成翻译、不希望整书上传第三方网盘的隐私敏感用户。
-5. 需要批量翻译 TXT 文稿的写作者、研究者、学生。
+2. 习惯在手机上阅读网络小说 / 轻小说，需要翻页模式、书签、目录搜索、精确续读，还想在通勤时「听」完一整章的读者。
+3. 想直接用本应用打开 QQ / 微信里收到的 TXT 小说，不必先导出再手动导入的读者。
+4. 想把整本书转成母语，但希望翻译只是「需要时才打开」的附加能力。
+5. 拥有免费翻译 API 额度，希望在自己的手机上完成翻译、不希望整书上传第三方网盘的隐私敏感用户。
+6. 需要批量翻译 TXT 文稿的写作者、研究者、学生。
 
 ### 1.4 产品原则
 
 - **阅读优先**：书库、详情、阅读器是主路径；翻译、多语去重、导出是工具区。
 - **文件留在本地**：书籍解析、阅读进度、书签、译文均在设备本地完成；只把待翻译的文本分段发送给用户选定的翻译接口。
-- **离线可读**：未配置任何接口也能导入、阅读、加书签、记录进度。
+- **离线可读**：未配置任何接口也能导入、阅读、加书签、记录进度、听书（使用系统离线语音）。
+- **顺手打开**：TXT / EPUB 可以由 QQ、微信、文件管理器直接交给本应用打开，不要求用户先「选文件」。
+- **听读同一处**：朗读的位置就是正在看的那一页，随读高亮，切换章节自动跟随。
 - **长文优先**：以“整本书 / 整章”为排版单位，不做聊天框式阅读。
-- **密钥属于用户**：不内置、不代管 API 密钥；密钥存入系统安全存储。
-- **可扩展**：语言、翻译引擎、文件格式、阅读模式都以注册表 / 适配器方式预留扩展位。
+- **滑动要顺**：阅读页滚动 / 翻页必须稳在满帧，任何无关状态（时钟、工具栏）不得触发正文重建。
+- **密钥属于用户**：不内置、不代管 API 密钥；密钥存入系统安全存储，或放在用户自己的 Go 网关里。
+- **可扩展**：语言、翻译引擎、文件格式、阅读模式、语音都以注册表 / 适配器方式预留扩展位。
 - **克制而沉浸**：视觉采用深蓝紫夜色、低饱和卡片与高对比文字；阅读器默认进入沉浸状态，工具栏按需出现。
 - **可读性优先**：主动提升文字与背景对比度，关键配色通过 WCAG AA 对比度校验。
 
@@ -54,6 +58,11 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 | --- | --- | --- |
 | 书架 | 导入、展示、删除 TXT / EPUB；封面网格、格式筛选、续读卡、书签数 | ✅ |
 | 文件解析 | TXT 编码识别与分章；EPUB 章节提取 | ✅ |
+| 试听书 | 系统 TTS、章节连续朗读、暂停 / 继续、上一句 / 下一句 / 上下章、倍速、音色、播完本章停止 / 定时停止、随读高亮 | ✅ |
+| 后台播放 | Android 媒体前台服务 + 通知栏控制；iOS `AVAudioSession` + 锁屏 / 控制中心 Now Playing；中断与拔耳机自动暂停 | ✅ |
+| 外部打开 | 从 QQ / 微信 / 文件管理器的「用其他应用打开」接收 TXT / EPUB，导入本地书架 | ✅ |
+| 阅读性能 | 段落拆分缓存、正文 RepaintBoundary、内容子树缓存、朗读高亮按段落局部重建 | ✅ |
+| Go 后端 | Go 代理池与有道 v3 翻译网关，服务端签名、令牌鉴权、健康检查、译文缓存（TTL + LRU + 并发合并） | ✅ |
 | 阅读器 | 滚动 / 翻页两种模式、自动分页、点击 / 滑动翻页、沉浸工具栏、页码 | ✅ |
 | 阅读设置 | 背景 / 字体 / 字号 / 行距 / 段距 / 缩进 / 边距 / 指示器 / 常亮 / 隐藏状态栏 / 翻页动画 | ✅ |
 | 目录与书签 | 章节搜索、当前章节高亮、译文标记；书签添加 / 跳转 / 删除 | ✅ |
@@ -71,26 +80,25 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 
 ### 2.2 暂不在 MVP 范围
 
-- 网络书源 / 插件式小说下载、书城搜索（v1.3 仍以本地导入为主）。
-- 听书 TTS、后台播放、朗读高亮与锁屏控制。
+- 网络书源 / 插件式小说下载、书城搜索（v1.4 仍以本地导入为主）。
 - 扫描版 PDF、图片 OCR、MOBI/AZW3。
 - EPUB 内图片、样式、脚注跳转链路的保留（MVP 只保留可翻译文本与章节结构）。
 - 账号系统、云同步、多设备任务接力。
 - 机器翻译质量的人工校对工作台。
-- 后台任务/锁屏继续翻译（当前页面退出会取消任务，避免不可控计费）。
+- 后台翻译任务/锁屏继续翻译（翻译仍由当前页面任务管理；听书支持系统 TTS 继续播放）。
 - 自定义提示词、大模型翻译（架构可扩展，但本期不接入）。
 - 基于 AI 语义相似度的自动去重判定（v1.1 使用本地结构启发式 + 用户逐组确认；不承诺语义完全等价）。
 - 翻页模式下的自定义字体文件、背景图片、音量键翻页（需要额外的平台插件与文件权限；v1.3 先交付核心排版与手势）。
 
 ### 2.3 未来可扩展方向
 
-- 网络书源下载、插件市场、全书搜索与正文朗读（TTS）。
+- 正版网络书源、全文检索与云端高质量语音合成（当前用系统 TTS）。
 - 接入百度翻译、DeepL、Google Cloud Translation、腾讯云翻译。
 - 中英对照双语导出、术语表、译文润色。
 - 分章购译/批量任务队列、断点续译。
 - 多语去重的语义校验、同语言重复检测与规则自定义。
 - iPad 分栏阅读、跨设备进度同步。
-- 从 Files / 分享菜单“用 Beizx的阅读器打开”。
+- 听书的跨设备播放接力与云端高品质语音合成。
 
 ---
 
@@ -160,7 +168,32 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
         → 原文 / 译文胶囊切换（有译文时）
 ```
 
-### 3.6 异常流程
+### 3.6 听书流程
+
+```
+阅读器 → 底部工具栏「听书」
+      → 以当前章节 + 当前页位置作为起点
+      → 章节切分为段落 / 句级朗读单元（≤220 字，超长段按句末标点切开）
+      → 系统 TTS 朗读当前单元，正文中同步高亮这一句
+      → 每读完一句自动接下一句；读到章末按「自动下一章」继续或停下
+      → 播放器面板：上/下一句、上/下一章、倍速、音色、定时关闭
+      → 关闭阅读页后，听书会话仍由全局控制器保持
+      → 锁屏 / 通知栏 / 控制中心 / 耳机按键可播放、暂停、上下章（v1.4.1）
+```
+
+### 3.7 外部打开流程
+
+```
+QQ / 微信 / 文件管理器 → 「用其他应用打开」→ Beizx的阅读器
+      → Android: ACTION_VIEW(content:// 或 file://) / ACTION_SEND
+        iOS: application(_:open:) / Files 文档打开
+      → 原生层校验扩展名（txt / epub）并复制到应用缓存
+      → Dart 侧接收 {path, name} → 走与「导入书籍」相同的解析流程
+      → 自动上架书架并提示「已导入《书名》」
+      → 缓存副本删除，书架保留应用自己的副本
+```
+
+### 3.8 异常流程
 
 - **接口未配置**：禁止开始翻译，显示跳转按钮。
 - **签名错误 / App ID 无效**：展示可读中文错误，指引检查配置。
@@ -175,6 +208,12 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - **恢复位置超出当前排版**：按 0..1 比例夹取，不会抛越界错误；翻页模式重新计算页码。
 - **阅读偏好损坏**：回退到默认阅读设置（夜色 / 滚动 / 18 号字）。
 - **书签指向的章节已不存在**：跳转时夹取到最近章节；删除书籍时一并删除书签。
+- **系统没有可用语音包**：听书面板提示「请先在系统设置里安装语音包」，阅读功能不受影响。
+- **朗读中的章节没有正文**：状态切到错误并提示「这一章没有可以朗读的文字」，不进入死循环。
+- **朗读引擎报错**：显示「朗读引擎出错了：…」，可再次点播放重试。
+- **外部应用发来非 TXT / EPUB**：原生层直接忽略（不崩溃、不弹错误），用户仍在应用内看到原来的书库。
+- **外部文件解析失败**：提示解析错误，书架不变；缓存副本不会残留。
+- **网关未配置 / 未启动**：翻译被拦截并提示填写网关地址；「测试连接」会探测 `/healthz`。
 
 ---
 
@@ -248,12 +287,13 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 密钥存储在系统安全存储（Android Keystore / iOS Keychain），不写入日志、不放入普通偏好文件。
 - 用户可一键清除密钥；清除后书库保留，翻译功能锁定。
 
-#### 设置页结构
+- **设置页结构**
 
 1. 引擎状态卡：当前服务商、配置状态、当前默认语言。
-2. 有道智云配置表单：App ID、App Secret（默认隐藏）、保存并测试、查看申请步骤。
-3. 已预留引擎：百度翻译、DeepL、Google Cloud Translation，展示“接口位已预留”。
-4. 隐私说明：密钥用途、文件不上传整书、仅分段发送文本。
+2. 引擎选择：有道直连 / 自建 Go 网关。
+3. 有道智云配置表单：App ID、App Secret（默认隐藏）、保存并测试、查看申请步骤。
+4. Go 网关配置表单：地址、访问口令、探活与端到端测试。
+5. 隐私说明：密钥用途、文件不上传整书、仅分段发送文本；使用网关时密钥留在用户自己的服务器。
 
 #### 预留扩展方式
 
@@ -272,7 +312,7 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 翻译结果按 `bookId + 目标语言` 本地保存；切换目标语言时自动读取已有缓存。
 - 译文保留章节边界和段落分隔；章节标题保留原文。
 
-### 4.6 阅读器（v1.3 重构）
+### 4.6 阅读器（v1.4 听书与流畅度增强）
 
 - 从书架、继续阅读卡片、书籍详情阅读卡或章节列表进入阅读页。
 - **默认沉浸**：打开时只有正文与底部时间 / 章节 / 进度指示；点击正文呼出 / 收起顶部与底部工具栏；隐藏时进入沉浸系统栏模式（可在设置中关闭「隐藏状态栏」）。
@@ -282,7 +322,7 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - **首行缩进与段距**：按段落拆分正文，首行缩进 0–2 字，段间距 0–28 独立可调；标题只在章节第一页出现，并为标题预留高度。
 - **工具栏**：
   - 顶部：返回、书名 + 当前章节、添加 / 取消书签、目录。
-  - 底部：目录、上一章、章节进度与全书百分比、下一章、阅读设置。
+  - 底部：目录、上一章、章节进度与全书百分比、下一章、阅读设置、听书。
   - 原文 / 译文胶囊：有译文时悬浮在右上角，切换后按当前位置重新排版。
 - **目录与书签**：底部抽屉分「目录 / 书签」两个分页；目录支持按标题或章节号搜索、当前章节高亮、译文标记，打开时自动滚动到当前章节；书签显示章节、摘要、时间，可跳转或删除。
 - **阅读设置**：外观、排版、操作三分页，详见 4.9；所有修改即时生效并持久保存。
@@ -295,7 +335,91 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 正文使用衬线优先排版，最大宽度受 760 约束；章节标题、字数 / 机器翻译提示随内容一起显示。
 - 页面背景由阅读皮肤决定（夜色 / 纸白 / 羊皮 / 护眼），阅读器外仍使用应用深蓝紫主题。
 
-### 4.7 导出
+- 正文使用衬线优先排版，最大宽度受 760 约束；章节标题、字数 / 机器翻译提示随内容一起显示。
+- 页面背景由阅读皮肤决定（夜色 / 纸白 / 羊皮 / 护眼），阅读器外仍使用应用深蓝紫主题。
+- **听书联动**：正在朗读的那一句在正文中高亮；朗读跨章时阅读器自动跟到新章节；朗读期间屏幕保持常亮。
+
+### 4.7 听书（v1.4 新增）
+
+形态参考 QQ 浏览器的「听书」：底部播放器面板 + 句子级控制，使用系统 TTS（离线可用、无需网络与密钥）。
+
+#### 播放与切分
+
+- 启动位置取「当前章节 + 当前章节内比例」，从正在看的那一页开始读，而不是从章首开始。
+- 章节先按段落切分；单段超过 220 字时按句末标点（。！？；…!?;.）切成句级单元，避免超长句导致暂停 / 跳过反应迟钝。
+- 逐句朗读：一句播完自动接下一句；读取章末时按「自动下一章」继续，或停在章末。
+- 每个朗读单元记录章节内字符区间与段落序号，供正文高亮与进度使用。
+
+#### 播放器面板
+
+| 控件 | 说明 |
+| --- | --- |
+| 播放 / 暂停 | 主按钮；未开始时点按即从当前位置开始朗读 |
+| 上一句 / 下一句 | 句级跳转；越过章边界时自动切换章节 |
+| 上一章 / 下一章 | 章节级跳转 |
+| 倍速 | 0.7x / 1.0x / 1.3x / 1.6x / 2.0x / 2.4x 六档，默认 1.0x |
+| 音色 | 列出系统已安装语音包（含语言区域），可选「系统默认」 |
+| 定时关闭 | 关闭 / 播完本章停止 / 15 分钟 / 30 分钟 / 60 分钟 |
+| 自动下一章 | 开：读完整章自动进入下一章；关：读完本章停止 |
+| 进度 | 「第 N / M 句」+ 章节内进度条 + 定时状态 |
+
+#### 状态与边界
+
+- 状态机：空闲 / 朗读中 / 已暂停 / 出错；出错时保留可读提示与重试入口。
+- 全局单例控制器：关闭阅读器页面后会话仍在，再次打开播放器可继续。
+- 单句朗读失败不抛出到 UI，转为错误状态并提示。
+- 倍速、音色、自动下一章写入本地偏好（键 `tts.preferences.v1`），下次打开沿用；定时关闭属于当次会话，不持久化。
+
+#### 后台播放与锁屏控制（v1.4.1 新增）
+
+| 平台 | 实现 | 行为 |
+| --- | --- | --- |
+| Android | `audio_service` 的 `mediaPlayback` 前台服务 + `MediaSession` | 息屏 / 切后台继续朗读；通知栏与锁屏显示书名与章节名，可播放、暂停、上 / 下一章 |
+| iOS | `UIBackgroundModes=audio` + `audio_session` 的 `playback` / `spokenAudio` + `MPNowPlayingInfoCenter` / `MPRemoteCommandCenter` | 锁屏与控制中心显示章节信息并可远程控制 |
+
+- 媒体会话里「一首曲目」就是一章：`MediaItem` 用书名 + 章节名，`skipToNext` / `skipToPrevious` 对应上 / 下一章，与阅读器自动跟章一致。
+- 只在状态真正变化（章节切换、播放 / 暂停、能否上下章）时才向系统推送，逐句朗读不会刷屏式更新通知。
+- 音频中断（来电、其他 App 抢焦点）时暂停；中断结束后仅在「中断前正在播放」时自动恢复，用户自己按的暂停不会被覆盖。
+- 拔出耳机 / 断开蓝牙（becoming noisy）立即暂停，避免外放打扰。
+- 平台没有媒体会话时（桌面、单元测试）自动降级为应用内播放器，`TtsController` 不感知差异。
+
+### 4.8 用其他应用打开（v1.4 新增）
+
+#### Android
+
+- 注册 `ACTION_VIEW` 意图过滤器，覆盖：
+  - `content://` + `text/plain`、`application/epub+zip`、`application/octet-stream`（QQ / 微信常用 `octet-stream`）；
+  - `file://` + `.txt` / `.epub` 路径模式（部分文件管理器）。
+- 注册 `ACTION_SEND`（`text/plain` / `epub+zip` / `octet-stream`），出现在系统分享面板。
+- `launchMode=singleTop`：应用已在前台时通过 `onNewIntent` 接收，不会重开。
+- `MainActivity` 读取 `content://` 的 `OpenableColumns.DISPLAY_NAME`，复制到 `cacheDir/external_import/`，通过方法通道 `com.yiyue.translation_app/files` 交给 Dart。
+- 冷启动通过 `takePendingFile` 主动拉取；运行中通过 `onFileOpened` 推送；同一路径只处理一次。
+
+#### iOS
+
+- `Info.plist` 声明 `CFBundleDocumentTypes`（纯文本 / EPUB，`LSHandlerRank=Alternate`）与 `LSSupportsOpeningDocumentsInPlace`。
+- `AppDelegate.application(_:open:options:)` 接收文档 URL，开启安全作用域访问后复制到临时目录，通过同一通道交给 Dart。
+
+#### 共同约定
+
+- 只接受 `txt` / `epub`；其他格式在原生层静默忽略。
+- 导入走与「导入书籍」完全相同的解析与入库流程（80 MB 上限、编码识别、分章、EPUB spine 解析）。
+- 导入成功后自动切到书架并提示书名；导入使用的缓存副本随即删除。
+- 书架不因外部文件而改变原有排序规则，新书置顶。
+
+### 4.9 翻译网关（v1.4 新增，后端由 Java/Kotlin 迁移到 Go）
+
+- 新增可选服务商「自建 Go 网关」，与「有道直连」并列，可在设置页切换。
+- 选择网关时，App 只保存网关地址与可选访问口令；有道 App ID / Secret 只存在于服务器环境变量。
+- 网关接口为 `POST /v1/translate`，请求 `{text, from, to}`，响应 `{text, detectedSource, target}`；语言代码沿用有道 v3（`auto / zh-CHS / en / ja / ko`）。
+- 错误以 HTTP 状态 + `{error, code}` 返回：401 密钥无效、402 余额不足、429 频率受限、502 上游异常、503 网关未配置密钥。
+- 「测试连接」先探测 `GET /healthz`，再翻译 “Hello” 验证端到端链路。
+- **译文缓存（v1.4.1）**：成功译文按 `(from, to, text)` 的 SHA-256 进入进程内 TTL + LRU 缓存（默认 512 条 / 3600 秒，可用 `GATEWAY_CACHE_ENTRIES`、`GATEWAY_CACHE_TTL_SECONDS` 调整，设 0 关闭）；命中不消耗有道额度，响应头 `X-Cache: hit|miss` 说明来源。
+- 同一段的并发请求（重试、多设备共用网关）由 single-flight 合并成一次上游调用；失败结果不缓存，避免把限频 / 网络错误写进缓存。
+- `/healthz` 增加 `translateCache` 计数（条数、命中、未命中、淘汰、过期），方便判断缓存是否生效。
+- 网关同时提供代理池接口（`/v1/proxies`、`/v1/proxies/take`、`/v1/proxies/refresh`），把原先 JVM/Kotlin 的代理服务迁移到 Go。
+
+### 4.10 导出
 
 - 译文完成后可导出：
   - **TXT**：书名、作者、目标语言、导出时间 + 全部译文。
@@ -307,7 +431,7 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 去重文件名包含 `_去重版`，TXT 使用 UTF-8 BOM；EPUB 语言元数据采用本次选择的保留语言。
 - 去重文件先持久化至应用沙盒 `exports`，再通过系统分享面板由用户保存或发送。
 
-### 4.8 多语去重（v1.1 新增）
+### 4.11 多语去重（v1.1 新增）
 
 #### 目标
 
@@ -353,7 +477,7 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 日文全汉字段落可能被判为中文；混合语言行按强势脚本归类。
 - 启发式识别不能保证语义等价，用户取消勾选即可跳过误判。
 
-### 4.9 阅读设置
+### 4.12 阅读设置
 
 阅读器内的设置面板与「设置 → 阅读偏好」全屏页共用同一套控件。
 
@@ -393,7 +517,7 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - v1.2 的四项旧键（字号 / 行距 / 皮肤 / 衬线）在缺失新键时自动迁移。
 - 旧配置损坏时回退默认值，不阻塞启动。
 
-### 4.10 书签与阅读记录
+### 4.13 书签与阅读记录
 
 - 书签字段：`id`、`bookId`、`chapterIndex`、`chapterTitle`、章节内 `fraction`、摘要 `snippet`、`createdAt`。
 - 点击顶部书签按钮在当前章节位置添加 / 取消书签；判定「当前位置已加书签」的容差为章节内 4%。
@@ -402,13 +526,13 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 阅读进度与书签都按书籍存储；删除书籍时同时清理。
 - 阅读时长按秒累计；从书架续读、详情阅读卡和设置页「阅读记录」都能看到累计时长。
 
-### 4.11 设置页
+### 4.14 设置页
 
 底部导航第二项由「接口设置」改为「设置」，翻译只是设置中的一个可选项：
 
 - 阅读：阅读偏好入口（当前模式 / 字号 / 皮肤 / 字体摘要）、阅读记录（藏书、开读本数、累计时长）。
-- 翻译：有道智云配置状态与入口；说明不配置也能阅读。
-- 关于：应用名「Beizx的阅读器」、版本 `v1.3.0 (6)`、技术栈与隐私说明。
+- 翻译：当前引擎状态与入口（有道直连配置 / 自建 Go 网关地址与口令）；说明不配置也能阅读。
+- 关于：应用名「Beizx的阅读器」、版本 `v1.4.1 (8)`、技术栈与隐私说明。
 
 ---
 
@@ -420,7 +544,7 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 底部导航
 ├── 书架
 │   ├── 封面网格 / 格式筛选 / 最近阅读续读卡 / 书签数
-│   ├── 导入 TXT / EPUB 文件
+│   ├── 导入 TXT / EPUB 文件（含从 QQ / 微信 / 文件管理器「用其他应用打开」）
 │   └── 书籍详情
 │       ├── 阅读卡（开始 / 继续阅读、阅读时长）
 │       ├── 章节目录（前 8 章 + 全部章节）
@@ -429,11 +553,12 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 │   └── 阅读器
 │       ├── 滚动 / 翻页阅读
 │       ├── 目录 + 书签抽屉
+│       ├── 听书播放器（倍速 / 音色 / 定时）
 │       └── 阅读设置（外观 / 排版 / 操作）
 └── 设置
     ├── 阅读偏好（全屏设置）
     ├── 阅读记录
-    ├── 翻译接口（有道智云）
+    ├── 翻译接口（有道直连 / 自建 Go 网关）
     └── 关于与隐私
 ```
 
@@ -473,20 +598,21 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 顶部与工具卡均可进入多语去重；去重版生成后跳转到新书详情。
 - 删除入口放在更多菜单，二次确认。
 
-### 5.5 接口设置页（从「设置 → 翻译接口」进入）
+### 5.5 翻译接口页（从「设置 → 翻译接口」进入）
 
 - 顶部「翻译引擎」标题与说明。
 - 当前引擎状态卡与默认语言摘要。
-- 有道配置卡：App ID、App Secret、显示/隐藏、保存、测试连接、清除。
+- **引擎选择卡**：有道直连 / 自建 Go 网关，分别显示配置状态，可随时切换。
+- 有道配置卡：App ID、App Secret、显示/隐藏、保存、测试连接、清除；适合直接调用有道的用户。
+- Go 网关配置卡：服务地址、可选访问口令、探活 + 端到端测试、保存并启用；适合已有服务器、想把有道密钥留在服务端的用户。
 - 测试结果内联展示，不用弹窗打断。
-- 申请步骤：注册有道智云 → 创建应用 → 开通文本翻译 → 复制应用 ID 与密钥。
-- 预留服务商以灰化卡展示。
-- 底部隐私说明。
+- 隐私说明区分「直连」与「经自建服务器」两种数据路径。
+- 服务端部署、环境变量与 curl 示例见 `server/README.md`。
 
 ### 5.6 阅读器页
 
 - 默认沉浸：打开时只有正文与底部指示器（时间 / 全书进度 / 章节名），顶部与底部工具栏隐藏；点击正文呼出，再次点击收起。
-- 顶部工具栏：返回、书名 + 当前章节、书签按钮、目录按钮；底部工具栏：目录、上一章、章节进度 / 全书百分比、下一章、设置。
+- 顶部工具栏：返回、书名 + 当前章节、书签按钮、目录按钮；底部工具栏：目录、上一章、章节进度 / 全书百分比、下一章、听书、设置。
 - **滚动模式**：正文左右留白 = 屏幕安全区 + 左右边距；段落间按设置留段距，首行缩进；底部「本章完」提示。
 - **翻页模式**：按当前屏幕、字号、行距、段距、缩进、边距计算页码；第一页为章节标题 + 字数 / 译文提示留出高度；页面底部显示「第 N / M 页」。
 - 翻页模式的首页 / 末页是章节切换页（「已经是第一页了 / 已经是最后一页了」）；在边界继续滑动会切换相邻章节，没有相邻章节时展示提示并回弹。
@@ -495,6 +621,7 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 阅读设置使用底部抽屉，三个分页可滚动；所有修改即时重排（翻页模式重新分页）。
 - 页面背景跟随阅读皮肤；工具栏使用同皮肤的 chrome 色，避免纸白 / 羊皮主题下出现深色条。
 - 页面转场统一采用淡入 + 轻微上移；书架进入详情采用封面 Hero 元素过渡；翻页使用 easeOutCubic 平滑动画。
+- **听书**：工具栏「听书」按钮先开始／续播当前章节，再拉起播放面板；面板为深色底部抽屉，包含引用样式的当前句、句子进度条、播放控制、倍速芯片、定时 / 自动下一章 / 音色；朗读中的句子在正文中以浅紫底色高亮。
 
 ### 5.7 设置页
 
@@ -540,10 +667,11 @@ v1.3 的核心变化：把「翻译工具」重新定位为「阅读器 + 可选
 - 分享导出文件：share_plus。
 - 多语去重：纯 Dart 本地语言脚本识别 + 相邻段落启发式，无新增网络依赖。
 - 阅读分页：Flutter `TextPainter` / `LineMetrics` + 段落片段，本地纯 Dart，无新插件依赖。
-- 阅读交互：`PageView` + `ValueNotifier<double>` 记录章节内位置；滚动模式使用垂直滚动 + 外层横向换章。
-- 阅读偏好：单个 JSON 存入 shared_preferences，v1.2 旧键自动迁移。
-- 屏幕常亮：轻量 `MethodChannel`（Android `FLAG_KEEP_SCREEN_ON` / iOS `isIdleTimerDisabled`），未引入第三方插件。
-- 测试：flutter_test + http MockClient。
+- 听书：`flutter_tts` 4.2.5；以 `SpeechEngine` 抽象隔离平台差异，`TtsController` 驱动逐句播放 / 高亮 / 定时与自动下一章。
+- 后台播放：`audio_service` 0.18（Android 媒体前台服务 / 通知栏、iOS Now Playing）+ `audio_session` 0.2（`AVAudioSession` 播放类别、音频焦点与中断事件）；两者都藏在 `TtsMediaSession` 接口后面。
+- 外部打开：Android `ACTION_VIEW` / `ACTION_SEND` 与 iOS 文档类型；统一通过 MethodChannel 传递沙盒缓存路径。
+- Go 后端：Go 1.27，标准库 HTTP 服务；代理池与有道 v3 网关 + 进程内译文缓存，`GATEWAY_TOKEN` 可选鉴权。
+- 测试：flutter_test + http MockClient + FakeSpeechEngine；Go 使用 `go test` / `go vet`。
 
 ### 6.2 目录结构
 
@@ -562,19 +690,26 @@ lib/
 │   ├── reading_progress.dart
 │   ├── reader_settings.dart
 │   ├── bookmark.dart
+│   ├── tts_settings.dart
 │   └── translation_provider.dart
 ├── services/
 │   ├── local_store.dart
 │   ├── import/
 │   │   ├── book_importer.dart
+│   │   ├── external_file_service.dart
 │   │   ├── txt_parser.dart
 │   │   └── epub_parser.dart
 │   ├── reader/
 │   │   ├── reader_paginator.dart
-│   │   └── reader_system.dart
+│   │   ├── reader_system.dart
+│   │   ├── speech_engine.dart
+│   │   ├── tts_media_session.dart        # 锁屏 / 通知栏媒体会话抽象
+│   │   ├── audio_service_media_session.dart
+│   │   └── reader_settings.dart（模型在 models/）
 │   ├── translation/
 │   │   ├── translation_engine.dart
 │   │   ├── youdao_engine.dart
+│   │   ├── gateway_engine.dart
 │   │   ├── text_chunker.dart
 │   │   └── book_translator.dart
 │   ├── dedupe/
@@ -584,7 +719,8 @@ lib/
 ├── state/
 │   ├── settings_controller.dart
 │   ├── library_controller.dart
-│   └── translation_controller.dart
+│   ├── translation_controller.dart
+│   └── tts_controller.dart
 ├── screens/
 │   ├── library_screen.dart
 │   ├── book_detail_screen.dart
@@ -600,7 +736,20 @@ lib/
     ├── language_picker_sheet.dart
     ├── reader_content.dart
     ├── reader_contents_sheet.dart
-    └── reader_settings_panel.dart
+    ├── reader_settings_panel.dart
+    └── tts_player_sheet.dart
+```
+
+Go 后端（与 `lib/` 平级）：
+
+```
+server/
+├── cmd/server/main.go
+├── internal/proxypool/     # 代理模型 / 抓取源 / 校验队列
+├── internal/gateway/       # 有道 v3 签名、/v1/translate、译文缓存
+├── internal/httpapi/       # 路由、鉴权、CORS
+├── Dockerfile
+└── README.md
 ```
 
 ### 6.3 数据模型
@@ -614,8 +763,10 @@ lib/
 - `DedupeAnalysis`：源书、保留语言、候选列表、扫描段落数、涉及章节与可移除字数。
 - `ReadingProgress`：bookId、当前章节、章节内比例 `chapterFraction`、累计阅读秒数、章节总数与最后阅读时间；`fraction` / `percent` / `label` / `isFinished` 为派生只读属性。
 - `ReaderPreferences`：模式、字号、行距、皮肤、衬线、字重、段间距、首行缩进、左右 / 上下边距、常亮、隐藏状态栏、点击翻页、翻页动画、时钟 / 章节 / 进度 / 页码指示、两端对齐；提供 JSON 序列化、`normalized()`、`layoutSignature`。
+- `TtsPreferences`：倍速、音调、语音名称、语言区域、自动下一章；键 `tts.preferences.v1`。
+- `TtsSegment`：朗读文本、原文字符起止位置、段落序号；驱动高亮和句级跳转。
 - `Bookmark`：id、bookId、章节索引、章节标题、章节内比例、摘要、创建时间。
-- `AppInfo`：应用名称 `Beizx的阅读器`、版本号 `1.3.0`、构建号 `6`。
+- `AppInfo`：应用名称 `Beizx的阅读器`、版本号 `1.4.1`、构建号 `8`。
 
 ### 6.4 本地存储
 
@@ -626,7 +777,9 @@ lib/
   - `books/{bookId}.json`：完整解析文本。
   - `translations/{bookId}_{lang}.json`：译文缓存。
   - `exports/`：导出文件临时目录。
-- 设置项（含语言、翻译偏好与完整阅读偏好）存 shared_preferences；密钥单独存 secure storage。
+- 设置项（含语言、翻译偏好、完整阅读偏好与听书偏好）存 shared_preferences；密钥与网关口令单独存 secure storage。
+- 听书偏好键 `tts.preferences.v1`；定时关闭为会话状态，不落盘。
+- 外部打开的缓存副本位于 `cacheDir/external_import/`（Android）或临时目录（iOS），导入成功后删除。
 - `LocalStore._writeJson` 按文件串行化写入并使用临时文件重命名，避免滚动时高频保存进度造成临时文件冲突。
 - 删除书籍时同步删除其译文文件、阅读进度与书签。
 - 去重版作为新的 `books/{bookId}.json` 写入，与普通导入书一致；原书文件不变。
@@ -640,8 +793,9 @@ lib/
   - 取消标记在请求前后检查；
   - 请求间隔与重试策略集中在该层；
   - 所有块成功后一次性写入 `TranslationRecord`。
-- 不同引擎只需实现 `TranslationEngine`。
-- 目标语言使用内部 code 到服务商 code 的映射，避免 UI 绑定服务商。
+- 翻译引擎只发出用户选择的语言代码；直连有道与 Go 网关均通过各自适配器实现 `TranslationEngine`。
+- `GatewayEngine` 仅保存自建网关 URL 与可选 Token，不需要在 App 填有道 App ID / Secret。
+- Go 服务放在仓库 `server/`；当前 Flutter 项目仍是 Dart/Flutter，后端迁移不改变移动端 UI 技术栈。
 
 ### 6.6 多语去重实现
 
@@ -695,8 +849,10 @@ lib/
 #### 滚动
 
 - `ReaderScrollView` 使用 `SingleChildScrollView` + 段落 `Text` + 段间距；外层 `PageView` 负责左右换章。
-- `ScrollController` 的 `offset / maxScrollExtent` 作为章节内比例；首次布局后按保存比例跳转。
-- 点击正文切换工具栏；选择复制通过包住整章段落的 `SelectionArea` 实现。
+- 段落拆分结果只在文本 / 首行缩进变化时重算；正文区放入 `RepaintBoundary`。
+- 章节内位置由 `ScrollController.offset / maxScrollExtent` 计算；首次布局后按保存比例跳转。
+- 正文的滚动帧只更新位置监听器与节流保存；时钟每分钟更新，工具栏 / 章节信息变化不强制重建整章内容。
+- 整章保留 `SelectionArea`，支持复制；阅读视图通过 memoized widget 缓存命中时直接复用正文子树。
 
 #### 进度、时长与书签
 
@@ -718,6 +874,37 @@ lib/
 - Android `MainActivity.configureFlutterEngine` 中增删 `FLAG_KEEP_SCREEN_ON`。
 - iOS `AppDelegate.didInitializeImplicitFlutterEngine` 中设置 `UIApplication.shared.isIdleTimerDisabled`。
 - Dart 侧 `ReaderSystem.keepScreenOn` 捕获 `MissingPluginException` / `PlatformException`，在测试或未实现平台静默降级，不阻塞阅读。
+- 外部文件使用 `MethodChannel('com.yiyue.translation_app/files')`：
+  - Dart → 原生：`takePendingFile`（冷启动拉取）；
+  - 原生 → Dart：`onFileOpened`（运行中推送，参数 `{path, name}`）。
+- `ExternalFileService` 在构造时即注册回调，避免「UI 还没订阅就丢了推送」；同一路径只处理一次。
+
+### 6.11 听书实现（v1.4）
+
+- `SpeechEngine`（`lib/services/reader/speech_engine.dart`）是平台 TTS 的抽象：`prepare / speak / pause / stop / voices / setHandlers`；`FlutterTtsEngine` 是其 `flutter_tts` 实现，测试用 `FakeSpeechEngine`。
+- `TtsController`（`lib/state/tts_controller.dart`）持有 Book、章节游标、朗读单元列表与睡眠定时器：
+  - `buildSegments()` 生成带 `start / end / paragraphIndex` 的单元，供高亮与断点续读；
+  - `_handleSegmentComplete()` 推进到下一句，章末按「自动下一章 / 播完本章停止 / 定时到点」决定继续或结束；
+  - `startChapter(book, index, chapterFraction)` 以 0..1 比例定位起始句，实现「从当前页开始读」。
+- 阅读器通过 `Provider` 读取同一个 `TtsController`：监听章节变化自动跟章、朗读中保持屏幕常亮；正在朗读的句子通过 `ValueNotifier<String?>` 下发给正文组件，而不是走 `setState`。
+- 面板 `TtsPlayerSheet` 只依赖控制器，不含播放逻辑；倍速 / 音色 / 自动下一章同时写回 `SettingsController`（键 `tts.preferences.v1`）。
+- 媒体会话（v1.4.1）：`TtsMediaSession` 抽象（`lib/services/reader/tts_media_session.dart`）只定义 `bindCommands / update / clear`，`TtsController` 构造时注入并在每次状态变化后推送 `TtsMediaInfo`；实现 `AudioServiceMediaSession` 继承 `BaseAudioHandler`，把锁屏 / 通知栏 / 耳机按键的 `play / pause / stop / skipToNext / skipToPrevious` 转回控制器，同时负责 `AudioSession` 的激活与中断、拔耳机事件。
+
+### 6.12 阅读流畅度优化（v1.4 / v1.4.1）
+
+滚动 / 翻页掉帧的根源与对应处理：
+
+| 根源 | 处理 |
+| --- | --- |
+| 每帧重建整章正文（时钟、工具栏、进度任意一次 setState 都会重排 Text） | `_memoizedContent()` 用内容键缓存正文 widget：章节、布局签名、模式、段距、页码开关、原译状态、位置令牌、内边距都未变时直接复用同一实例 |
+| 每次重建都重新拆分段落 | `ReaderScrollView` 缓存 `displayParagraphs`，键为文本哈希 + 首行缩进 |
+| 朗读推进一句就重建整章（v1.4 遗留） | 高亮改由 `ValueNotifier<String?>` 下发，并移出内容缓存键；`ReaderHighlightedParagraph` 只对「包含这句」的段落返回富文本，其余段落复用同一个 `child` widget 实例，Flutter 直接跳过重建 |
+| 章节字数用 `text.runes.length` 每次 build 重算 | 滚动 / 翻页视图按文本实例缓存字数 |
+| 翻页模式每次 build 都跑一次标题 `TextPainter` | 标题高度按「标题 + 宽度 + 字体 + 缩放」缓存 |
+| 页面整体重绘（工具栏动画、指示器时钟） | 正文与每一页正文分别包一层 `RepaintBoundary`，滚动与时钟动画不再重绘文字层 |
+| 无关的 Provider 依赖 | 阅读器不再 `watch` `LibraryController`（只在初始化时读一次），避免保存进度后触发整页重建 |
+
+翻页模式另外：分页结果按 `layoutSignature` 缓存、页面正文用 `OverflowBox` 裁剪、仅工具栏可见时启用 `SelectionArea`。
 
 ---
 
@@ -728,9 +915,11 @@ lib/
 - API 密钥使用系统 Keystore / Keychain，不进入日志、不进入普通 JSON。
 - 应用不自行上传整本书；只在用户发起翻译时发送分段文本。
 - 多语去重完全在本地执行，不调用翻译接口，不上传段落。
-- 不内置任何第三方密钥。
+- **听书**：系统 TTS 语音合成在设备侧执行；文本不因听书上传网络。
+- **外部文件**：QQ / 微信交给 App 的文件先复制到应用私有缓存，解析成功后删除缓存副本；仅保留本地书库副本。
+- **后端鉴权**：Go 网关支持 `GATEWAY_TOKEN`，建议在公网部署时启用 HTTPS 与随机长令牌。
 - 删除书籍同时清理译文；清除密钥需二次确认。
-- 网络请求仅访问 `openapi.youdao.com`（后续引擎按配置扩展）。
+- **网络请求**：直接调用时只访问 `openapi.youdao.com`；配置 Go 网关时，分段文本会经过用户自己的服务器转发到有道。
 
 ### 7.2 性能
 
@@ -739,8 +928,11 @@ lib/
 - 长文翻译逐块推进，避免一次性内存与网络压力。
 - 阅读器按章节渲染；滚动模式只构建当前章节段落，翻页模式只对当前章节做一次分页，不整书一次性排版。
 - 分页结果按布局签名缓存，滚动回调只更新时间指示与节流的进度写入，不触发整页重建。
+- 正文 widget 子树带缓存键，滚动 / 翻页过程中不重复构建；正文与每页正文包 `RepaintBoundary`，工具栏动画与时钟不引起文字层重绘。
+- 听书推进时只有「包含当前句」的那一段重建，章节其余段落复用同一 widget 实例。
 - 书库列表只展示元信息。
 - 高频进度写入按文件串行化并使用临时文件重命名，避免滚动时磁盘竞争。
+- 听书逐句送合成，章节不会一次性塞进平台 TTS 队列；单句 ≤220 字保证暂停 / 跳过的响应速度。
 
 ### 7.3 可用性
 
@@ -754,9 +946,15 @@ lib/
 
 ### 7.4 兼容性
 
-- Android：minSdk 24+（Android 7.0，安全存储与文件选择插件要求），targetSdk 按当前 Flutter 模板。
+- Android：minSdk 24+（Android 7.0，安全存储与文件选择插件要求），targetSdk 按当前 Flutter 模板；听书需要系统已安装 TTS 引擎（Android 自带，部分精简 ROM 需手动安装语音包）。
+- Android 11+ 已声明 `TTS_SERVICE` 查询意图，否则 `TextToSpeech` 无法绑定。
 - iOS：14.0+（文件选择插件要求）；需要 macOS + Xcode 完成签名构建。
 - 不依赖 Web / 桌面端。
+- Go 后端：Go 1.21+ 可编译（本项目在 1.27.3 验证），单二进制、无外部依赖；`server/Dockerfile` 可直接构建镜像。
+
+### 7.5 构建注意事项
+
+- **项目路径不能包含非 ASCII 字符**：Flutter AOT 快照器（`gen_snapshot`）在 Windows 上读不了含中文目录的 `app.dill`，会报 `Unable to read file` 并让 `assembleRelease` 失败。用 `tool/build_android.ps1` 构建，它会自动把工程镜像到 `%LOCALAPPDATA%\Temp\translation_app_build_ascii` 后再编译，并把 APK 拷回 `artifacts/`。
 
 ---
 
@@ -775,7 +973,7 @@ lib/
 11. 书籍详情可进入「多语去重」，可切换中文 / 日语 / 英语 / 韩语作为保留语言。
 12. 双语示例能识别相邻对照组，所有候选可预览、全选、取消全选、逐组取消。
 13. 生成去重版后，书库新增新书；原书内容不变，去重版只保留目标语言一侧并保留其余正文。
-14. 没有候选时显示空状态，两个生成按钮均不可用；当前版本号为 1.3.0。
+14. 没有候选时显示空状态，两个生成按钮均不可用；当前版本号为 1.4.1。
 15. 去重版可与普通书一样进入阅读、翻译和导出流程。
 16. 深蓝紫主题下，正文、次级文字、弱化文字与对应背景的对比度均 ≥ 4.5:1；状态栏/导航栏使用浅色图标。
 17. 勾选候选组后点击「生成并导出」，可选择 TXT 或 EPUB；生成的文件能通过分享面板保存，内容为去重后的章节正文。
@@ -789,9 +987,24 @@ lib/
 25. 目录抽屉可搜索章节、高亮当前章节、标记已有译文；书签抽屉可添加、跳转、删除书签。
 26. 书籍详情优先展示「开始阅读 / 继续阅读」，并显示全书进度、累计阅读时长、书签数；前 8 章可直接跳转，其余章节可在全部目录中打开。
 27. 底部导航为「书架 / 设置」；设置页包含阅读偏好、阅读记录、翻译接口与关于信息，翻译不再是独立一级入口。
-28. 应用显示名为「Beizx的阅读器」，版本号 1.3.0（构建 6）。
+28. 应用显示名为「Beizx的阅读器」，版本号 1.4.1（构建 8）。
 29. 删除书籍后，其阅读进度、书签与译文一并清除；其他书不受影响。
 30. 翻页模式在工具栏显示时可长按选择正文；工具栏收起后横向滑动恢复翻页。
+31. 阅读器底部有「听书」入口；点击后从当前页开始朗读，正文高亮正在朗读的句子，且面板显示「第 N / M 句」。
+32. 听书面板支持上 / 下一句、上 / 下一章、六档倍速、音色选择、定时关闭（含「播完本章停止」）与自动下一章开关；倍速与自动下一章重启后保持。
+33. 关闭阅读器后听书会话仍在；重新打开播放器可继续播放或停止。
+34. 在 QQ 中对一个 `.txt` 选择「用其他应用打开 → Beizx的阅读器」，应用启动并自动导入该书到书架，提示书名。
+35. 应用已在前台时再从 QQ 发送另一个 TXT / EPUB，通过 `onNewIntent` 导入，不重启应用、不重复导入同一文件。
+36. 分享面板中的本应用条目可接收 TXT / EPUB；非 TXT / EPUB 文件被静默忽略且应用不崩溃。
+37. 阅读长章节时上下滚动与左右翻页保持流畅：时钟跳动、工具栏呼出收起、听书高亮推进都不导致整章重排。
+38. `server/` 下 `go vet ./...` 与 `go test ./...` 全部通过；`GET /healthz` 返回状态与代理池大小，未配置密钥时 `POST /v1/translate` 返回 503 与可读错误。
+39. 在设置 → 翻译接口切换到「自建 Go 网关」，填入地址并测试通过后可完整翻译一本书；切回「有道直连」同样可用。
+40. `flutter test` 全部通过（122 项），`dart analyze lib test` 无问题，`tool/build_android.ps1` 产出 `artifacts/BeizxReader-v1.4.1.apk` 并记录 SHA-256。
+41. Android 上开始听书后锁屏，朗读继续；通知栏 / 锁屏显示书名与章节名，点暂停 / 播放 / 下一章均生效，与阅读器内状态一致。
+42. 听书过程中来电会暂停，通话结束后自动继续；拔掉耳机立即暂停，不会外放。
+43. iOS 上切到后台或锁屏后朗读继续，控制中心可播放 / 暂停 / 上下章（需 macOS + Xcode 构建验证）。
+44. 同一段文本连续翻译两次，第二次响应头为 `X-Cache: hit` 且不再消耗有道额度；`GET /healthz` 的 `translateCache.hits` 递增。
+45. 听书朗读推进时正文不整章重排：滚动 / 翻页保持流畅，只有当前朗读段落出现高亮底色。
 
 ---
 
@@ -817,8 +1030,12 @@ lib/
 - **分页差异**：翻页模式用 `TextPainter` 估算行高和字符偏移，极端自定义字体、系统字体缩放或组合 emoji 可能造成 1–2 行的视觉差异；页数变化时会按比例保留位置。
 - **翻页模式与文本选择**：横向滑动与选择手势存在冲突，工具栏显示时启用选择、收起时优先翻页；需要复制时先呼出工具栏。
 - **屏幕常亮**：依赖系统允许应用保持唤醒；部分定制系统仍可能按自身策略熄屏。应用仅提供开关，不承诺所有机型生效。
-- **听书与下载未实现**：v1.3 是本地阅读器版本，网络书源与 TTS 仅是路线，不在本版承诺内。
-- **票据安全**：设备被越狱/root 时系统安全存储能力下降；应用侧不额外收集密钥。
+- **听书依赖系统语音包**：使用系统 TTS，音色与质量取决于设备已安装的语音引擎；精简 ROM 可能没有中文语音，需要用户自行安装。
+- **听书后台播放**：Android 通过 `audio_service` 的 `mediaPlayback` 前台服务在息屏 / 后台继续朗读，iOS 依赖 `UIBackgroundModes=audio` 与 `AVAudioSession` 播放类别；部分定制 ROM 的省电策略仍可能杀掉后台服务，需要在系统设置里允许本应用后台运行。
+- **锁屏控制依赖系统媒体会话**：通知栏 / 锁屏 / 车机的样式由系统决定，应用只能提供书名、章节名与播放控制；个别 ROM 的自定义媒体面板可能只显示基础按钮。
+- **外部打开的格式限制**：只接受 TXT / EPUB；部分应用会用 `application/octet-stream` 发送，已在意图过滤器中覆盖，但仍可能有应用发送私有 MIME 而无法列出本应用。
+- **Go 网关是可选自建服务**：仓库提供 `server/`，但不内置托管地址、不代管密钥；用户需自行部署并保证网络可达。
+- **票据安全**：设备被越狱/root 时系统安全存储能力下降；应用侧不额外收集密钥。使用网关时密钥位于服务器，需自行做好访问控制。
 - **版权**：用户应确保对待翻译文件拥有合法使用权；应用仅提供工具能力。
 - **iOS 构建**：当前 Windows 环境无法完成 iOS 签名构建；工程代码与配置已包含 iOS 平台，需迁移到 macOS 执行 `flutter build ios`。
 
@@ -845,9 +1062,100 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 
 有道智云申请入口：<https://ai.youdao.com/>（注册 → 创建应用 → 文本翻译服务 → 获取应用 ID 与应用密钥）。
 
+### 11.1 Go 后端
+
+```bash
+cd server
+go test ./...                       # 单元测试
+go run ./cmd/server                 # 默认 :8080，代理池默认开启
+
+# 带翻译能力（Windows PowerShell）
+$env:YOUDAO_APP_KEY="应用ID"; $env:YOUDAO_APP_SECRET="应用密钥"; $env:GATEWAY_TOKEN="访问口令"; go run ./cmd/server
+
+# 构建单文件二进制
+go build -trimpath -ldflags="-s -w" -o bin/reader-server ./cmd/server
+
+# 容器
+docker build -t beizx-reader-server .
+docker run -p 8080:8080 -e YOUDAO_APP_KEY=... -e YOUDAO_APP_SECRET=... beizx-reader-server
+```
+
+在 App 的「设置 → 翻译接口 → 引擎选择」里选「自建 Go 网关」，填入地址（例如 `http://192.168.1.5:8080`）与口令，点「测试连接」即可。接口清单与环境变量见 `server/README.md`。
+
 ---
 
 ## 12. 版本历史
+
+### v1.4.1（2026-11-05）
+
+**后台播放与锁屏媒体控制**
+
+- 新增 `audio_service` 0.18 / `audio_session` 0.2 依赖与 `TtsMediaSession` 抽象（`lib/services/reader/tts_media_session.dart`），`TtsController` 通过它推送「书名 + 章节名 + 播放状态 + 能否上下章」，并接收锁屏 / 通知栏 / 耳机按键的 `play / pause / stop / skipToNext / skipToPrevious`。
+- `AudioServiceMediaSession`（`lib/services/reader/audio_service_media_session.dart`）继承 `BaseAudioHandler`：Android 走 `mediaPlayback` 前台服务 + MediaSession 通知；iOS 走 `MPNowPlayingInfoCenter` / `MPRemoteCommandCenter`，并把 `AVAudioSession` 配置为 `playback` + `spokenAudio`（`AudioSessionConfiguration.speech()`）。
+- 中断与拔耳机：来电等中断暂停、结束后只在「中断前正在播放」时恢复；`becomingNoisy` 立即暂停。
+- Android：`AndroidManifest.xml` 增加 `WAKE_LOCK` / `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_MEDIA_PLAYBACK`，注册 `AudioService` 与 `MediaButtonReceiver`；`MainActivity` 改为继承 `AudioServiceActivity`。
+- iOS：`Info.plist` 增加 `UIBackgroundModes = audio`。
+- 状态未变化时不重复推送，逐句朗读不会持续刷新通知。
+
+**Go 网关译文缓存**
+
+- 新增 `server/internal/gateway/cache.go`：`CachedTranslator` 以 `(from, to, text)` 的 SHA-256 为键，做 TTL + LRU 缓存（默认 512 条 / 3600 秒），并用 single-flight 合并同一段的并发请求；失败结果不缓存。
+- `POST /v1/translate` 增加 `X-Cache: hit|miss` 响应头；`/healthz` 增加 `translateCache`（entries / hits / misses / evictions / expired）。
+- 新增环境变量 `GATEWAY_CACHE_ENTRIES`、`GATEWAY_CACHE_TTL_SECONDS`（设 0 关闭）；服务版本号改为 `1.1.0`。
+
+**阅读流畅度**
+
+- 朗读高亮从 `setState` 改为 `ValueNotifier<String?>`，并移出正文内容缓存键：听书推进时不再重建整章。
+- 新增 `ReaderHighlightedParagraph`：只有包含当前句的段落返回富文本，其余段落复用同一个 `child` widget 实例，Flutter 直接跳过重建。
+- 章节字数与翻页模式标题高度改为缓存，避免每次 build 重算 `runes.length` 与重复 `TextPainter` 布局。
+
+**版本与验证**
+
+- 版本升级为 `1.4.1+8`（`AppInfo` / `pubspec.yaml` 同步）。
+- `flutter test` 122 项全部通过；`dart analyze lib test` 无问题；`server` 下 `go vet ./...`、`go test ./...` 全部通过。
+- `tool/build_android.ps1` 产出 `artifacts/BeizxReader-v1.4.1.apk`（约 60.9 MB），SHA-256 记录于 `artifacts/SHA256SUMS.txt`。
+- 新增测试：媒体会话状态同步与远端命令（7 项）、朗读高亮局部重建（3 项）、Go 译文缓存 / 并发合并 / X-Cache / healthz 统计。
+
+### v1.4.0（2026-11-05）
+
+**后端：Java / Kotlin → Go**
+
+- 原先的代理服务是 `LightNovelReader-dev-1.3/proxy` 里的 JVM/Kotlin 实现（Jsoup 抓公开代理 + 本地校验 + 队列）。本次在仓库新增 `server/`，用 Go 重写同一套能力，并补上翻译网关：
+  - `internal/proxypool`：`Proxy` 模型、`ip:port` 文本 / JSON 两种列表解析、公开 IPv4 校验、去重队列、并发补池串行化（`Refill` 内部锁）、代理可用性校验（经代理 GET `PROXY_CHECK_URL`）。
+  - `internal/gateway`：有道 v3 签名（`sha256(appKey + truncate(q) + salt + curtime + secret)`，`truncate` 按 API 规则取前 10 + 长度 + 后 10）、请求与错误码映射、`POST /v1/translate` 处理器。
+  - `internal/httpapi`：路由、Bearer / `X-API-Token` 鉴权、CORS、panic 兜底。
+  - `cmd/server`：环境变量配置、后台定时补池、优雅退出、`/healthz`。
+  - 另附 `Dockerfile`、`README.md`、`.gitignore`。
+- App 端新增可选服务商「自建 Go 网关」（`GatewayEngine`），有道密钥不再必须放在手机上；设置页可在「有道直连 / 自建 Go 网关」之间切换，支持 `/healthz` 探测与端到端测试。
+- 语言代码约定：网关沿用有道 v3 代码，App 侧通过 `providerCode('youdao')` 映射。
+
+**听书（TTS）**
+
+- 新增 `flutter_tts` 依赖、`SpeechEngine` 抽象与 `FlutterTtsEngine` 实现、`TtsController` 全局控制器、`TtsPlayerSheet` 播放器面板。
+- 章节按段落 / 句级切分（单句 ≤220 字），逐句朗读并在正文中高亮当前句；支持从当前页开始读、上 / 下一句、上 / 下一章、六档倍速、系统音色选择、定时关闭（含「播完本章停止」）与自动下一章。
+- 朗读跨章时阅读器自动跟随；朗读期间保持屏幕常亮；关闭阅读页后会话仍保留。
+- 听书偏好持久化到 `tts.preferences.v1`（倍速 / 音调 / 音色 / 语言 / 自动下一章）。
+
+**用其他应用打开**
+
+- Android：新增 `ACTION_VIEW`（`content://` + `text/plain` / `epub+zip` / `octet-stream`，`file://` + `.txt` / `.epub` 路径模式）与 `ACTION_SEND` 意图过滤器；`MainActivity` 解析 `OpenableColumns.DISPLAY_NAME`、复制到缓存、经 `com.yiyue.translation_app/files` 通道交付；支持冷启动 `takePendingFile` 与运行中 `onFileOpened`。
+- iOS：`Info.plist` 增加 `CFBundleDocumentTypes`（纯文本 / EPUB）与 `LSSupportsOpeningDocumentsInPlace`；`AppDelegate` 处理 `application(_:open:options:)`，带安全作用域访问的复制。
+- Dart：`ExternalFileService`（去重、冷启动拉取、运行中推送、队列）、`LibraryController.importFromPath`、`RootShell` 自动导入并提示书名、导入后清理缓存副本。
+- Android 11+ 增补 `TTS_SERVICE` 查询意图，保证听书能绑定系统语音引擎。
+
+**阅读流畅度**
+
+- 阅读器正文改为「内容键 + widget 缓存」，时钟跳动、工具栏开关、进度保存不再重建整章文本。
+- `ReaderScrollView` 缓存段落拆分结果；正文与每页正文加 `RepaintBoundary`，滚动与工具栏动画不再重绘文字层。
+- 阅读器不再 `watch` `LibraryController`，去掉保存进度引起的连锁重建。
+- 翻译设置文案与「引擎选择」卡片重构，接口页明确区分直连与网关两种密钥存放方式。
+
+**版本与验证**
+
+- 版本升级为 `1.4.0+7`（`AppInfo` / `pubspec.yaml` 同步）。
+- `flutter test` 112 项全部通过；`dart analyze lib test` 无问题；`server` 下 `go vet ./...`、`go test ./...` 全部通过。
+- `tool/build_android.ps1` 产出 `artifacts/BeizxReader-v1.4.0.apk`（约 59.8 MB），SHA-256 记录于 `artifacts/SHA256SUMS.txt`。
+- 新增测试：听书切分 / 播放状态机 / 自动下一章 / 定时停止 / 跳句跳章 / 偏好序列化（22 项）、Go 网关客户端（7 项）、外部文件通道（5 项）、Go 后端（代理池 / 签名 / 网关 / 路由）。
 
 ### v1.3.0（2026-11-04）
 
@@ -914,11 +1222,121 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 
 ---
 
-## 13. v1.3.0 改动位置速查
+## 13. v1.4.1 改动位置速查
+
+> 回答「这一版改了哪里」。v1.4.0 / v1.3.0 的速查表保留在 14、15 节。
+
+### 13.1 新增文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `lib/services/reader/tts_media_session.dart` | `TtsMediaInfo` / `TtsMediaCommands` / `TtsMediaSession` 抽象，控制器只依赖它 |
+| `lib/services/reader/audio_service_media_session.dart` | `initTtsMediaSession()` + `AudioServiceMediaSession`：前台服务、Now Playing、`AVAudioSession`、中断与拔耳机 |
+| `server/internal/gateway/cache.go` | `CachedTranslator`：TTL + LRU 译文缓存、single-flight、命中统计 |
+| `server/internal/gateway/cache_test.go` | 缓存命中 / 过期 / LRU 淘汰 / 并发合并 / 失败不缓存 / `X-Cache` |
+| `test/support/fake_media_session.dart`、`test/tts_media_session_test.dart` | 媒体会话状态同步与远端命令测试 |
+| `test/reader_highlight_test.dart` | 朗读高亮只影响命中的那一段 |
+
+### 13.2 修改文件
+
+| 文件 | 改动 |
+| --- | --- |
+| `pubspec.yaml` | 新增 `audio_service: ^0.18.19`、`audio_session: ^0.2.4`；版本 `1.4.1+8` |
+| `lib/state/tts_controller.dart` | 注入 `TtsMediaSession`、绑定远端命令、`_publishMedia()` 推送状态、`dispose` 清理通知 |
+| `lib/main.dart` | 启动时 `initTtsMediaSession()` 并把会话交给 `TtsController` |
+| `lib/screens/chapter_reader_screen.dart` | 高亮改为 `ValueNotifier`、移出内容缓存键、章节切换时同步高亮 |
+| `lib/widgets/reader_content.dart` | `highlight` 参数改为 `ValueListenable`、新增 `ReaderHighlightedParagraph`、缓存字数与标题高度 |
+| `lib/core/app_info.dart` | 版本 `1.4.1` / 构建 `8` |
+| `android/app/src/main/AndroidManifest.xml` | 媒体前台服务权限、`AudioService`、`MediaButtonReceiver` |
+| `android/app/src/main/kotlin/.../MainActivity.kt` | 改为继承 `AudioServiceActivity` |
+| `ios/Runner/Info.plist` | `UIBackgroundModes = audio` |
+| `server/cmd/server/main.go` | 缓存配置与装配、版本 `1.1.0` |
+| `server/internal/gateway/{youdao,translate_handler}.go` | `Result.Cached` 标记与 `X-Cache` 响应头 |
+| `server/internal/httpapi/router.go` | `/healthz` 增加 `translateCache` |
+| `README.md`、`server/README.md`、`deepseek.md` | v1.4.1 功能、缓存配置、测试数量与边界说明 |
+
+### 13.3 验证命令
+
+```bash
+# Flutter
+dart analyze lib test        # 无问题
+flutter test                 # 122 项通过
+
+# Go 后端
+cd server
+go vet ./...                 # 无问题
+go test ./...                # 全部通过（含缓存测试）
+go run ./cmd/server          # GET /healthz 可见 translateCache
+```
+
+---
+
+## 14. v1.4.0 改动位置速查
+
+> 回答「哪里改了」。上一版（v1.3.0）的速查表保留在 13.x 之后的小节里。
+
+### 14.1 新增文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `server/go.mod`、`server/cmd/server/main.go` | Go 服务入口：环境变量配置、后台补池、优雅退出 |
+| `server/internal/proxypool/{proxy,source,pool}.go` | 代理模型与解析、抓取源、校验与队列 |
+| `server/internal/gateway/{youdao,translate_handler}.go` | 有道 v3 签名与 `POST /v1/translate` |
+| `server/internal/httpapi/router.go` | 路由、鉴权、CORS、panic 兜底 |
+| `server/internal/**/*_test.go` | Go 单元测试（代理池 / 签名 / 网关 / 路由） |
+| `server/README.md`、`server/Dockerfile`、`server/.gitignore` | 部署与接口文档 |
+| `lib/models/tts_settings.dart` | 听书偏好模型与 JSON 序列化 |
+| `lib/services/reader/speech_engine.dart` | TTS 平台抽象 + `FlutterTtsEngine` |
+| `lib/state/tts_controller.dart` | 听书状态机：切分、逐句播放、定时、自动下一章 |
+| `lib/widgets/tts_player_sheet.dart` | 听书播放器面板 |
+| `lib/services/translation/gateway_engine.dart` | 自建 Go 网关客户端 |
+| `lib/services/import/external_file_service.dart` | 外部打开通道封装 |
+| `test/tts_controller_test.dart`、`test/gateway_engine_test.dart`、`test/external_file_service_test.dart`、`test/support/fake_speech_engine.dart` | 新增测试 |
+
+### 14.2 修改文件
+
+| 文件 | 改动 |
+| --- | --- |
+| `pubspec.yaml` | 新增 `flutter_tts: ^4.2.5`；版本 `1.4.0+7` |
+| `lib/main.dart` | 创建全局 `TtsController` 并注入 |
+| `lib/app.dart` | 注入 `TtsController`；`RootShell` 接收外部打开文件并导入 |
+| `lib/state/settings_controller.dart` | 网关口令 / 地址、服务商切换、`TtsPreferences` 持久化、`createEngine` 分支、`testGatewayConnection` |
+| `lib/state/library_controller.dart` | `importFromPath` 与统一的 `_register` 入库流程 |
+| `lib/models/translation_provider.dart` | 新增「自建 Go 网关」服务商 |
+| `lib/screens/api_settings_screen.dart` | 引擎选择卡、Go 网关配置卡、隐私文案更新 |
+| `lib/screens/chapter_reader_screen.dart` | 听书入口与联动、正文缓存、高亮传递、去掉 `LibraryController` 的 watch |
+| `lib/widgets/reader_content.dart` | 段落缓存、`RepaintBoundary`、`readerParagraphText` 高亮渲染 |
+| `lib/core/app_info.dart` | 版本 `1.4.0` / 构建 `7` |
+| `android/app/src/main/AndroidManifest.xml` | 外部打开 / 分享意图过滤器、`TTS_SERVICE` 查询 |
+| `android/app/src/main/kotlin/.../MainActivity.kt` | `files` 通道、`onNewIntent`、缓存复制、扩展名校验 |
+| `ios/Runner/Info.plist` | 文档类型与 `LSSupportsOpeningDocumentsInPlace` |
+| `ios/Runner/AppDelegate.swift` | `files` 通道与 `application(_:open:)` 处理 |
+| `test/app_screens_test.dart` | 注入 `TtsController`，新增听书面板测试 |
+
+### 14.3 验证命令
+
+```bash
+# Flutter
+dart analyze lib test        # 无问题
+flutter test                 # 112 项通过
+
+# Go 后端
+cd server
+go vet ./...                 # 无问题
+go test ./...                # 全部通过
+go run ./cmd/server          # 默认 :8080，GET /healthz 探活
+
+# Android 产物（路径含中文时务必用脚本）
+powershell -File tool/build_android.ps1
+```
+
+---
+
+## 15. v1.3.0 改动位置速查
 
 > 这一节专门回答「哪里改了」。按目录列出文件、改动与验证方式。
 
-### 13.1 身份与版本
+### 15.1 身份与版本
 
 | 位置 | 改动 |
 | --- | --- |
@@ -933,7 +1351,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 | `lib/services/document_exporter.dart`、`lib/services/export_service.dart` | 导出文件与分享文案更名 |
 | `tool/build_android.ps1` | APK 产物名改为 ASCII 的 `BeizxReader-v<version>.apk`，避免 PowerShell 5.1 中文脚本路径问题 |
 
-### 13.2 阅读模型与持久化
+### 15.2 阅读模型与持久化
 
 | 位置 | 改动 |
 | --- | --- |
@@ -945,7 +1363,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 | `lib/state/settings_controller.dart` | 阅读偏好改为单 JSON 持久化（`reader.preferences.v2`），兼容 v1.2 四项旧键，新增 `resetReaderPreferences` |
 | `lib/core/utils/text_utils.dart` | 新增 `formatReadingDuration`、`formatClockTime`、`excerpt` |
 
-### 13.3 阅读器本体
+### 15.3 阅读器本体
 
 | 位置 | 改动 |
 | --- | --- |
@@ -960,7 +1378,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 | `android/app/src/main/kotlin/com/yiyue/translation_app/MainActivity.kt` | 新增 `com.yiyue.translation_app/reader` 通道与 `FLAG_KEEP_SCREEN_ON` 开关 |
 | `ios/Runner/AppDelegate.swift` | 注册同名通道，设置 `UIApplication.shared.isIdleTimerDisabled` |
 
-### 13.4 阅读优先的页面调整
+### 15.4 阅读优先的页面调整
 
 | 位置 | 改动 |
 | --- | --- |
@@ -968,7 +1386,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 | `lib/screens/book_detail_screen.dart` | 新增 `_ReadingCard`（开始 / 继续阅读、进度、阅读时长、书签数）；章节列表前置并改为前 8 章 + 全部章节抽屉；翻译设置与多语去重下移；详情监听书库以刷新进度 |
 | `lib/screens/api_settings_screen.dart` | 页面保留，但不再是一级导航；从「设置 → 翻译接口」或书籍详情进入 |
 
-### 13.5 测试与文档
+### 15.5 测试与文档
 
 | 位置 | 改动 |
 | --- | --- |
@@ -981,7 +1399,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 | `README.md` | 更新为 v1.3.0 阅读器定位、构建 / 测试 / 已知边界 |
 | `deepseek.md` | 本文件：产品定位、功能、技术、验收、版本历史与本节改动速查 |
 
-### 13.6 关键数据与行为变化
+### 15.6 关键数据与行为变化
 
 - `progress.json` 新增 `chapterFraction`、`readingSeconds`；旧文件缺少字段时按 0 处理。
 - 新增 `bookmarks.json`；删除书籍时会删除对应书签。
@@ -989,7 +1407,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 - 全书百分比语义从「已打开章节比例」改为「章节 + 章节内位置」，同一进度数值会与 v1.2 不同。
 - 底部导航的第二个入口从「接口设置」变为「设置」；翻译入口移动到设置页与书籍详情工具区。
 
-### 13.7 手动验收路径
+### 15.7 手动验收路径
 
 1. 导入 `samples/长夜灯塔.txt`，确认书架出现书卡；打开详情，点击「开始阅读」。
 2. 阅读器内点击正文呼出工具栏；打开「设置 → 外观」，切换「翻页阅读」与「纸白」。

@@ -1,11 +1,32 @@
 package com.yiyue.translation_app
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.view.WindowManager
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.util.UUID
 
-class MainActivity : FlutterActivity() {
+/**
+ * Serves two Flutter engines channels:
+ *
+ * `.../reader`: keeps the screen awake while reading.
+ * `.../files`: receives documents opened from other apps (QQ's "用其他应用打开"
+ * arrives as ACTION_VIEW with a content:// URI) and copies them into the cache
+ * directory so Dart can import them like a picked file.
+ *
+ * Extends `AudioServiceActivity` (a `FlutterActivity`) so the audio_service
+ * plugin can share the Flutter engine with its media-playback foreground
+ * service; that service is what keeps 听书 alive with the screen off and
+ * renders the lock screen / notification controls.
+ */
+class MainActivity : AudioServiceActivity() {
+    private var filesChannel: MethodChannel? = null
+    private var pendingImport: Map<String, String>? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.yiyue.translation_app/reader")
@@ -22,5 +43,81 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        filesChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.yiyue.translation_app/files")
+                .also { channel ->
+                    channel.setMethodCallHandler { call, result ->
+                        when (call.method) {
+                            "takePendingFile" -> {
+                                val pending = pendingImport
+                                pendingImport = null
+                                result.success(pending)
+                            }
+                            else -> result.notImplemented()
+                        }
+                    }
+                }
+
+        // A cold start from QQ / a file manager arrives through this intent.
+        handleIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent == null) return
+        val uri: Uri? =
+            when (intent.action) {
+                Intent.ACTION_VIEW -> intent.data
+                Intent.ACTION_SEND -> intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                else -> null
+            }
+        if (uri == null) return
+
+        val payload = copyToCache(uri) ?: return
+        pendingImport = payload
+        // If Dart is already listening, push it right away; otherwise the
+        // pending payload is drained on the next takePendingFile call.
+        filesChannel?.invokeMethod("onFileOpened", payload)
+    }
+
+    /** Copies the shared document into the cache and describes it for Dart. */
+    private fun copyToCache(uri: Uri): Map<String, String>? {
+        val displayName = resolveDisplayName(uri) ?: "incoming.txt"
+        val extension = displayName.substringAfterLast('.', "").lowercase()
+        if (extension != "txt" && extension != "epub") {
+            // Ignore formats we cannot read instead of failing on an arbitrary
+            // ACTION_VIEW sent by another app.
+            return null
+        }
+        return try {
+            val dir = File(cacheDir, "external_import").apply { mkdirs() }
+            val target = File(dir, "${UUID.randomUUID()}-$displayName")
+            val input = contentResolver.openInputStream(uri) ?: return null
+            input.use { source ->
+                target.outputStream().use { sink -> source.copyTo(sink) }
+            }
+            mapOf("path" to target.absolutePath, "name" to displayName)
+        } catch (error: Exception) {
+            null
+        }
+    }
+
+    private fun resolveDisplayName(uri: Uri): String? {
+        if (uri.scheme == "content") {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                        val name = cursor.getString(0)
+                        if (!name.isNullOrBlank()) return name
+                    }
+                }
+        }
+        return uri.lastPathSegment?.substringAfterLast('/')
     }
 }

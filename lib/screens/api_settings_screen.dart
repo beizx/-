@@ -17,10 +17,16 @@ class ApiSettingsScreen extends StatefulWidget {
 class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   late final TextEditingController _appKeyController;
   late final TextEditingController _appSecretController;
+  late final TextEditingController _gatewayUrlController;
+  late final TextEditingController _gatewayTokenController;
   bool _obscureSecret = true;
+  bool _obscureToken = true;
   bool _saving = false;
   bool _testing = false;
+  bool _savingGateway = false;
+  bool _testingGateway = false;
   ApiConnectionTestResult? _testResult;
+  ApiConnectionTestResult? _gatewayTestResult;
 
   @override
   void initState() {
@@ -32,13 +38,81 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _appSecretController = TextEditingController(
       text: settings.youdaoAppSecret ?? '',
     );
+    _gatewayUrlController = TextEditingController(text: settings.gatewayUrl);
+    _gatewayTokenController = TextEditingController(
+      text: settings.gatewayToken ?? '',
+    );
   }
 
   @override
   void dispose() {
     _appKeyController.dispose();
     _appSecretController.dispose();
+    _gatewayUrlController.dispose();
+    _gatewayTokenController.dispose();
     super.dispose();
+  }
+
+  Future<void> _saveGateway() async {
+    FocusScope.of(context).unfocus();
+    if (_gatewayUrlController.text.trim().isEmpty) {
+      _showMessage('请先填写网关地址');
+      return;
+    }
+
+    setState(() => _savingGateway = true);
+    try {
+      await context.read<SettingsController>().saveGatewayConfig(
+        url: _gatewayUrlController.text,
+        token: _gatewayTokenController.text,
+      );
+      if (!mounted) return;
+      setState(() => _gatewayTestResult = null);
+      _showMessage('已切换到自建 Go 网关');
+    } on Object catch (error) {
+      if (!mounted) return;
+      _showMessage('保存失败：$error');
+    } finally {
+      if (mounted) setState(() => _savingGateway = false);
+    }
+  }
+
+  Future<void> _testGateway() async {
+    FocusScope.of(context).unfocus();
+    if (_gatewayUrlController.text.trim().isEmpty) {
+      setState(() {
+        _gatewayTestResult = const ApiConnectionTestResult(
+          success: false,
+          message: '请先填写网关地址',
+        );
+      });
+      return;
+    }
+
+    setState(() {
+      _testingGateway = true;
+      _gatewayTestResult = null;
+    });
+    final result = await context
+        .read<SettingsController>()
+        .testGatewayConnection(
+          url: _gatewayUrlController.text,
+          token: _gatewayTokenController.text,
+        );
+    if (!mounted) return;
+    setState(() {
+      _testingGateway = false;
+      _gatewayTestResult = result;
+    });
+  }
+
+  Future<void> _clearGateway() async {
+    await context.read<SettingsController>().clearGatewayConfig();
+    if (!mounted) return;
+    _gatewayUrlController.clear();
+    _gatewayTokenController.clear();
+    setState(() => _gatewayTestResult = null);
+    _showMessage('已清除网关配置');
   }
 
   Future<void> _save() async {
@@ -134,7 +208,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   Widget build(BuildContext context) {
     final settings = context.watch<SettingsController>();
     final canPop = Navigator.of(context).canPop();
-    final configured = settings.isYoudaoConfigured;
+    final configured = settings.isCurrentProviderConfigured;
 
     return Scaffold(
       backgroundColor: AppColors.paper,
@@ -170,7 +244,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
             const SizedBox(height: 20),
             _buildCurrentEngineCard(context, settings, configured),
             const SizedBox(height: 22),
+            _buildEngineSwitch(context, settings),
+            const SizedBox(height: 22),
             _buildCredentialCard(context, configured),
+            const SizedBox(height: 22),
+            _buildGatewayCard(context, settings),
             const SizedBox(height: 22),
             _buildHowToCard(),
             const SizedBox(height: 22),
@@ -178,7 +256,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
             const SizedBox(height: 20),
             const InfoNote(
               text:
-                  '密钥仅写入 Android Keystore / iOS Keychain。翻译时只把分段正文发送给你配置的翻译服务，整本书不会上传到任何自建服务器。',
+                  '密钥仅写入 Android Keystore / iOS Keychain。直连有道时只把分段正文发送给有道；使用 Go 网关时 App ID / Secret 只保存在网关服务器。',
               icon: Icons.shield_outlined,
             ),
             const SizedBox(height: 18),
@@ -299,6 +377,241 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildEngineSwitch(
+    BuildContext context,
+    SettingsController settings,
+  ) {
+    final engines = [
+      (TranslationProviders.youdao, settings.isYoudaoConfigured),
+      (TranslationProviders.gateway, settings.isGatewayConfigured),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel(title: '引擎选择'),
+          const SizedBox(height: 8),
+          Text(
+            '两种方式二选一：直连有道，或把请求交给自己部署的 Go 网关（密钥留在服务器上）。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 14),
+          for (final engine in engines) ...[
+            InkWell(
+              borderRadius: BorderRadius.circular(13),
+              onTap: () => settings.setProvider(engine.$1.id),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 13,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: settings.providerId == engine.$1.id
+                      ? AppColors.accentWash
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(
+                    color: settings.providerId == engine.$1.id
+                        ? AppColors.accentStrong
+                        : AppColors.line,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      settings.providerId == engine.$1.id
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_off_rounded,
+                      size: 18,
+                      color: settings.providerId == engine.$1.id
+                          ? AppColors.accentStrong
+                          : AppColors.muted,
+                    ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            engine.$1.name,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.ink,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            engine.$1.description,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              height: 1.5,
+                              color: AppColors.muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      engine.$2
+                          ? Icons.check_circle_rounded
+                          : Icons.error_outline_rounded,
+                      size: 17,
+                      color: engine.$2 ? AppColors.jade : AppColors.muted,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGatewayCard(BuildContext context, SettingsController settings) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel(title: '自建 Go 网关'),
+          const SizedBox(height: 7),
+          Text(
+            '仓库 server/ 目录里的 Go 服务，负责有道签名与代理池。填它的地址即可，手机上不再保存接口密钥。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+          const _FieldLabel('网关地址'),
+          const SizedBox(height: 7),
+          TextField(
+            controller: _gatewayUrlController,
+            autocorrect: false,
+            enableSuggestions: false,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              hintText: 'http://192.168.1.5:8080',
+              prefixIcon: Icon(Icons.dns_outlined, size: 19),
+            ),
+            onChanged: (_) => _clearGatewayTestResult(),
+          ),
+          const SizedBox(height: 14),
+          const _FieldLabel('访问口令（可选）'),
+          const SizedBox(height: 7),
+          TextField(
+            controller: _gatewayTokenController,
+            autocorrect: false,
+            enableSuggestions: false,
+            obscureText: _obscureToken,
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              hintText: '对应服务端 GATEWAY_TOKEN',
+              prefixIcon: const Icon(Icons.vpn_key_outlined, size: 19),
+              suffixIcon: IconButton(
+                tooltip: _obscureToken ? '显示口令' : '隐藏口令',
+                icon: Icon(
+                  _obscureToken
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  size: 19,
+                ),
+                onPressed: () {
+                  setState(() => _obscureToken = !_obscureToken);
+                },
+              ),
+            ),
+            onChanged: (_) => _clearGatewayTestResult(),
+          ),
+          const SizedBox(height: 15),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            child: _gatewayTestResult == null
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: _TestResultCard(result: _gatewayTestResult!),
+                  ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _testingGateway || _savingGateway
+                      ? null
+                      : _testGateway,
+                  icon: _testingGateway
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.bolt_outlined, size: 18),
+                  label: Text(_testingGateway ? '测试中…' : '测试连接'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _savingGateway || _testingGateway
+                      ? null
+                      : _saveGateway,
+                  icon: _savingGateway
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.save_outlined, size: 18),
+                  label: Text(_savingGateway ? '保存中…' : '保存并启用'),
+                ),
+              ),
+            ],
+          ),
+          if (settings.isGatewayConfigured) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _savingGateway || _testingGateway
+                    ? null
+                    : _clearGateway,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.danger,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text('清除网关配置'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _clearGatewayTestResult() {
+    if (_gatewayTestResult != null) {
+      setState(() => _gatewayTestResult = null);
+    }
   }
 
   Widget _buildCredentialCard(BuildContext context, bool configured) {

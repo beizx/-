@@ -13,9 +13,11 @@ import '../models/reader_settings.dart';
 import '../services/reader/reader_system.dart';
 import '../state/library_controller.dart';
 import '../state/settings_controller.dart';
+import '../state/tts_controller.dart';
 import '../widgets/reader_content.dart';
 import '../widgets/reader_contents_sheet.dart';
 import '../widgets/reader_settings_panel.dart';
+import '../widgets/tts_player_sheet.dart';
 
 /// Immersive novel reader.
 ///
@@ -48,6 +50,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
   ReaderPreferences _reader = const ReaderPreferences();
   SettingsController? _settings;
   LibraryController? _library;
+  TtsController? _tts;
   bool _showTranslation = false;
   bool _chromeVisible = false;
   bool _initialized = false;
@@ -58,6 +61,16 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
   DateTime _now = DateTime.now();
   DateTime? _lastPersist;
   Timer? _ticker;
+
+  /// Memoised reading surface. Rebuilding an unchanged subtree is the main
+  /// source of dropped frames while scrolling, so the widget instance is
+  /// reused whenever nothing that affects layout has changed.
+  Widget? _contentCache;
+  String? _contentCacheKey;
+
+  /// Sentence being spoken, delivered outside the widget cache so 听书 does not
+  /// rebuild the chapter on every utterance.
+  final ValueNotifier<String?> _highlight = ValueNotifier<String?>(null);
 
   @override
   void initState() {
@@ -79,6 +92,8 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     _initialized = true;
     _settings = Provider.of<SettingsController?>(context, listen: false);
     _library = Provider.of<LibraryController?>(context, listen: false);
+    _tts = Provider.of<TtsController?>(context, listen: false);
+    _tts?.addListener(_handleTtsChanged);
     _reader = _settings?.readerPreferences ?? const ReaderPreferences();
     final progress = _library?.progressFor(widget.book.id);
     if (progress != null && progress.chapterIndex == _index) {
@@ -87,6 +102,50 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     unawaited(ReaderSystem.keepScreenOn(_reader.keepScreenOn));
     _applySystemUi(_reader);
   }
+
+  /// Follows the audiobook: when TTS advances into another chapter the reader
+  /// scrolls along, and playback keeps the screen awake.
+  void _handleTtsChanged() {
+    final tts = _tts;
+    if (tts == null || !mounted) return;
+    final wasPlaying = _wasTtsPlaying;
+    _wasTtsPlaying = tts.isPlaying;
+
+    if (tts.book?.id != widget.book.id) {
+      _syncHighlight();
+      return;
+    }
+    if (tts.isActive && tts.chapterIndex != _index) {
+      final target = tts.chapterIndex.clamp(0, _chapterCount - 1);
+      setState(() {
+        _index = target;
+        _positionToken++;
+      });
+      if (_chapterController.hasClients) {
+        _chapterController.jumpToPage(target);
+      }
+      unawaited(_persistProgress(force: true));
+      HapticFeedback.selectionClick();
+      _syncHighlight();
+      return;
+    }
+
+    _syncHighlight();
+    if (tts.isPlaying || wasPlaying) {
+      unawaited(ReaderSystem.keepScreenOn(true));
+    }
+    // Only the 听书 button state depends on play/pause; the spoken sentence is
+    // pushed through [_highlight] so the chapter itself is never rebuilt.
+    if (tts.isPlaying != wasPlaying) setState(() {});
+  }
+
+  void _syncHighlight() {
+    final next = _ttsHighlight;
+    if (next == _highlight.value) return;
+    _highlight.value = next;
+  }
+
+  bool _wasTtsPlaying = false;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -100,12 +159,14 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _tts?.removeListener(_handleTtsChanged);
     _ticker?.cancel();
     unawaited(_persistProgress(force: true));
     unawaited(ReaderSystem.keepScreenOn(false));
     _restoreSystemChrome();
     _chapterController.dispose();
     _fraction.dispose();
+    _highlight.dispose();
     super.dispose();
   }
 
@@ -163,6 +224,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     if (index == _index) return;
     setState(() => _index = index);
     _fraction.value = 0;
+    _syncHighlight();
     HapticFeedback.selectionClick();
     unawaited(_persistProgress(force: true));
   }
@@ -190,6 +252,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       _positionToken++;
       _fraction.value = toStart ? 0 : 0.999;
     });
+    _syncHighlight();
     unawaited(_persistProgress(force: true));
   }
 
@@ -201,6 +264,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       _positionToken++;
       _fraction.value = bookmark.fraction;
     });
+    _syncHighlight();
     if (_chapterController.hasClients) {
       _chapterController.jumpToPage(target);
     }
@@ -314,8 +378,28 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     );
   }
 
-  Future<void> _openReaderSettings() async {
-    HapticFeedback.selectionClick();
+  Future<void> _openTtsPlayer() async {
+    final tts = _tts;
+    if (tts == null) {
+      if (mounted) _showMessage('听书功能初始化失败');
+      return;
+    }
+    if (!tts.isReadingChapter(widget.book.id, _index)) {
+      final settings = _settings;
+      if (settings != null) {
+        await tts.updatePreferences(settings.ttsPreferences);
+      }
+      await tts.startChapter(
+        widget.book,
+        _index,
+        chapterFraction: _fraction.value,
+      );
+    }
+    if (!mounted) return;
+    await showTtsPlayerSheet(context, book: widget.book);
+  }
+
+  Future<void> _openReaderSettings() async {    HapticFeedback.selectionClick();
     var current = _readerPrefs;
     await showModalBottomSheet<void>(
       context: context,
@@ -348,8 +432,6 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<SettingsController?>();
-    final library = context.watch<LibraryController?>();
-    _library = library;
     final reader = settings?.readerPreferences ?? _reader;
     _reader = reader;
     final skin = reader.skin;
@@ -384,7 +466,9 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
           backgroundColor: skin.background,
           body: Stack(
             children: [
-              Positioned.fill(child: _buildContent(reader, contentPadding)),
+              Positioned.fill(
+                child: _memoizedContent(reader, contentPadding),
+              ),
               if (indicatorsEnabled) _buildIndicators(reader, inset),
               if (_hasTranslation) _buildLanguageSwitch(reader, inset),
               _buildTopBar(reader, inset),
@@ -394,6 +478,36 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
         ),
       ),
     );
+  }
+
+  /// Returns the same widget instance while nothing layout-relevant changed,
+  /// so toggling the toolbar, ticking the clock or advancing the spoken
+  /// sentence never rebuilds every paragraph of the chapter.
+  Widget _memoizedContent(ReaderPreferences reader, EdgeInsets contentPadding) {
+    final key = [
+      _index,
+      reader.layoutSignature,
+      reader.mode.name,
+      reader.paragraphSpacing,
+      reader.showPageNumber,
+      _showTranslation,
+      _positionToken,
+      contentPadding.toString(),
+    ].join('#');
+    final cached = _contentCache;
+    if (cached != null && key == _contentCacheKey) return cached;
+    _contentCacheKey = key;
+    _contentCache = _buildContent(reader, contentPadding);
+    return _contentCache!;
+  }
+
+  /// Sentence currently read aloud, but only while it belongs to this chapter.
+  String? get _ttsHighlight {
+    final tts = _tts;
+    if (tts == null || !tts.isActive) return null;
+    if (tts.book?.id != widget.book.id) return null;
+    if (tts.chapterIndex != _index) return null;
+    return tts.activeText;
   }
 
   Widget _buildContent(ReaderPreferences reader, EdgeInsets contentPadding) {
@@ -430,6 +544,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
             onFractionChanged: (value) => _onFractionChanged(index, value),
             onToggleChrome: _toggleChrome,
             hasNextChapter: index < _chapterCount - 1,
+            highlight: index == _index ? _highlight : null,
           );
         },
       );
@@ -454,6 +569,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       hasPreviousChapter: _index > 0,
       hasNextChapter: _index < _chapterCount - 1,
       selectable: _chromeVisible,
+      highlight: _highlight,
       onPreviousChapter: () {
         if (_index > 0) _goToChapter(_index - 1, toStart: false);
       },
@@ -658,6 +774,10 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
 
   Widget _buildBottomBar(ReaderPreferences reader, EdgeInsets inset) {
     final skin = reader.skin;
+    final ttsActive = _tts?.isReadingChapter(widget.book.id, _index) ?? false;
+    final ttsButtonIcon = ttsActive
+        ? Icons.graphic_eq_rounded
+        : Icons.headphones_rounded;
     return Positioned(
       left: 0,
       right: 0,
@@ -733,6 +853,12 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
                       onTap: _index < _chapterCount - 1
                           ? () => _goToChapter(_index + 1)
                           : null,
+                    ),
+                    _BarAction(
+                      icon: ttsButtonIcon,
+                      label: '听书',
+                      skin: skin,
+                      onTap: _openTtsPlayer,
                     ),
                     _BarAction(
                       icon: Icons.tune_rounded,

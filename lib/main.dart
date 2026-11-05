@@ -5,9 +5,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'core/theme/app_theme.dart';
 import 'services/local_store.dart';
+import 'services/reader/audio_service_media_session.dart';
 import 'state/library_controller.dart';
 import 'state/settings_controller.dart';
 import 'state/translation_controller.dart';
+import 'state/tts_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +24,10 @@ Future<void> main() async {
       onTranslationsChanged: library.refreshTranslatedLanguages,
     );
 
+    // Lock screen / notification controls. Returns null where the platform has
+    // no media session, in which case 听书 keeps running in-app only.
+    final mediaSession = await initTtsMediaSession();
+
     await Future.wait([settings.load(), library.load()]);
 
     runApp(
@@ -29,6 +35,10 @@ Future<void> main() async {
         settingsController: settings,
         libraryController: library,
         translationController: translation,
+        ttsController: TtsController(
+          preferences: settings.ttsPreferences,
+          mediaSession: mediaSession,
+        ),
       ),
     );
   } on Object catch (error) {

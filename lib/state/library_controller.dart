@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'dart:io';
 
 import '../models/book.dart';
 import '../models/bookmark.dart';
@@ -135,18 +136,50 @@ class LibraryController extends ChangeNotifier {
     try {
       final book = await _importer.pickAndImport();
       if (book == null) return null;
-      await store.saveBook(book);
-      _bookCache[book.id] = book;
-      _books.removeWhere((item) => item.id == book.id);
-      _books.insert(0, book.meta);
-      await store.saveLibrary(_books);
-      _translatedLanguages = await store.translatedLanguages();
-      notifyListeners();
+      await _register(book);
       return book;
     } finally {
       _isImporting = false;
       notifyListeners();
     }
+  }
+
+  /// Imports a file that another app opened with us (QQ, Files, 分享面板).
+  Future<Book?> importFromPath({
+    required String path,
+    required String fileName,
+  }) async {
+    if (_isImporting) return null;
+    _isImporting = true;
+    notifyListeners();
+    try {
+      final file = File(path);
+      final length = await file.length();
+      if (length > BookImporter.maxFileBytes) {
+        throw const BookImportException('文件超过 80 MB，请先拆分后再导入');
+      }
+      final bytes = await file.readAsBytes();
+      final book = await _importer.importBytes(
+        bytes: bytes,
+        fileName: fileName,
+      );
+      await _register(book);
+      return book;
+    } finally {
+      _isImporting = false;
+      notifyListeners();
+    }
+  }
+
+  /// Persists a freshly parsed book and puts it on top of the shelf.
+  Future<void> _register(Book book) async {
+    await store.saveBook(book);
+    _bookCache[book.id] = book;
+    _books.removeWhere((item) => item.id == book.id);
+    _books.insert(0, book.meta);
+    await store.saveLibrary(_books);
+    _translatedLanguages = await store.translatedLanguages();
+    notifyListeners();
   }
 
   Future<Book?> openBook(String bookId) async {

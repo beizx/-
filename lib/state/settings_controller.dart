@@ -8,6 +8,8 @@ import '../core/utils/text_utils.dart';
 import '../models/language.dart';
 import '../models/reader_settings.dart';
 import '../models/translation_provider.dart';
+import '../models/tts_settings.dart';
+import '../services/translation/gateway_engine.dart';
 import '../services/translation/translation_engine.dart';
 import '../services/translation/youdao_engine.dart';
 
@@ -45,11 +47,14 @@ class SettingsController extends ChangeNotifier {
   static const _providerKey = 'translation.provider';
   static const _youdaoAppKeyStorageKey = 'youdao.app_key';
   static const _youdaoSecretStorageKey = 'youdao.app_secret';
+  static const _gatewayUrlKey = 'translation.gateway_url';
+  static const _gatewayTokenStorageKey = 'gateway.token';
   static const _readerFontSizeKey = 'reader.font_size';
   static const _readerLineHeightKey = 'reader.line_height';
   static const _readerSkinKey = 'reader.skin';
   static const _readerSerifKey = 'reader.serif';
   static const _readerPreferencesKey = 'reader.preferences.v2';
+  static const _ttsPreferencesKey = 'tts.preferences.v1';
 
   final SharedPreferences _preferences;
   final FlutterSecureStorage _secureStorage;
@@ -59,9 +64,12 @@ class SettingsController extends ChangeNotifier {
   String _providerId = TranslationProviders.youdao.id;
   String? _youdaoAppKey;
   String? _youdaoAppSecret;
+  String _gatewayUrl = '';
+  String? _gatewayToken;
   bool _loaded = false;
   String? _storageError;
   ReaderPreferences _reader = const ReaderPreferences();
+  TtsPreferences _tts = const TtsPreferences();
 
   AppLanguage get sourceLanguage => _sourceLanguage;
   AppLanguage get targetLanguage => _targetLanguage;
@@ -70,15 +78,31 @@ class SettingsController extends ChangeNotifier {
       TranslationProviders.byId(_providerId);
   String? get youdaoAppKey => _youdaoAppKey;
   String? get youdaoAppSecret => _youdaoAppSecret;
+  String get gatewayUrl => _gatewayUrl;
+  String? get gatewayToken => _gatewayToken;
   bool get loaded => _loaded;
   String? get storageError => _storageError;
   ReaderPreferences get readerPreferences => _reader;
+  TtsPreferences get ttsPreferences => _tts;
 
   bool get isYoudaoConfigured =>
       (_youdaoAppKey?.trim().isNotEmpty ?? false) &&
       (_youdaoAppSecret?.trim().isNotEmpty ?? false);
 
-  bool get isCurrentProviderConfigured => isYoudaoConfigured;
+  bool get isGatewayConfigured => _gatewayUrl.trim().isNotEmpty;
+
+  bool get isCurrentProviderConfigured => switch (_providerId) {
+    'gateway' => isGatewayConfigured,
+    _ => isYoudaoConfigured,
+  };
+
+  /// Switches the active translation engine.
+  Future<void> setProvider(String providerId) async {
+    if (_providerId == providerId) return;
+    _providerId = TranslationProviders.byId(providerId).id;
+    await _preferences.setString(_providerKey, _providerId);
+    notifyListeners();
+  }
 
   Future<void> load() async {
     _sourceLanguage = Languages.sourceByCode(
@@ -89,14 +113,18 @@ class SettingsController extends ChangeNotifier {
     _targetLanguage = target.isAuto ? Languages.zh : target;
     _providerId = _preferences.getString(_providerKey) ?? provider.id;
     _reader = _loadReaderPreferences();
+    _tts = TtsPreferences.decode(_preferences.getString(_ttsPreferencesKey));
+    _gatewayUrl = _preferences.getString(_gatewayUrlKey) ?? '';
 
     try {
       final values = await Future.wait([
         _secureStorage.read(key: _youdaoAppKeyStorageKey),
         _secureStorage.read(key: _youdaoSecretStorageKey),
+        _secureStorage.read(key: _gatewayTokenStorageKey),
       ]);
       _youdaoAppKey = values[0];
       _youdaoAppSecret = values[1];
+      _gatewayToken = values[2];
       _storageError = null;
     } on Object catch (error) {
       _storageError = '无法读取系统安全存储：$error';
@@ -148,6 +176,13 @@ class SettingsController extends ChangeNotifier {
   Future<void> resetReaderPreferences() =>
       setReaderPreferences(const ReaderPreferences());
 
+  Future<void> setTtsPreferences(TtsPreferences preferences) async {
+    final normalized = preferences.normalized();
+    _tts = normalized;
+    await _preferences.setString(_ttsPreferencesKey, normalized.encode());
+    notifyListeners();
+  }
+
   Future<void> setLanguages({AppLanguage? source, AppLanguage? target}) async {
     var changed = false;
     if (source != null && source != _sourceLanguage) {
@@ -193,9 +228,89 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> saveGatewayConfig({
+    required String url,
+    String? token,
+  }) async {
+    final trimmedUrl = url.trim();
+    if (trimmedUrl.isEmpty) {
+      throw const FormatException('网关地址不能为空');
+    }
+    final uri = Uri.tryParse(
+      trimmedUrl.startsWith('http') ? trimmedUrl : 'http://$trimmedUrl',
+    );
+    if (uri == null || uri.host.isEmpty) {
+      throw const FormatException('网关地址格式不正确，例如 http://192.168.1.5:8080');
+    }
+    _gatewayUrl = trimmedUrl;
+    _gatewayToken = (token ?? '').trim();
+    await _preferences.setString(_gatewayUrlKey, trimmedUrl);
+    if (_gatewayToken!.isEmpty) {
+      await _secureStorage.delete(key: _gatewayTokenStorageKey);
+    } else {
+      await _secureStorage.write(
+        key: _gatewayTokenStorageKey,
+        value: _gatewayToken,
+      );
+    }
+    _providerId = TranslationProviders.gateway.id;
+    await _preferences.setString(_providerKey, _providerId);
+    _storageError = null;
+    notifyListeners();
+  }
+
+  Future<void> clearGatewayConfig() async {
+    _gatewayUrl = '';
+    _gatewayToken = null;
+    await _preferences.remove(_gatewayUrlKey);
+    await _secureStorage.delete(key: _gatewayTokenStorageKey);
+    notifyListeners();
+  }
+
   TranslationEngine? createEngine() {
+    if (_providerId == TranslationProviders.gateway.id) {
+      if (!isGatewayConfigured) return null;
+      return GatewayEngine(baseUrl: _gatewayUrl, token: _gatewayToken);
+    }
     if (!isYoudaoConfigured) return null;
     return YoudaoEngine(appKey: _youdaoAppKey!, appSecret: _youdaoAppSecret!);
+  }
+
+  /// Probes a gateway without saving it first.
+  Future<ApiConnectionTestResult> testGatewayConnection({
+    required String url,
+    String? token,
+  }) async {
+    final engine = GatewayEngine(baseUrl: url, token: token);
+    final started = DateTime.now();
+    try {
+      await engine.ping();
+      final preview = await engine.translate(
+        text: 'Hello',
+        sourceLanguage: Languages.auto.code,
+        targetLanguage: Languages.zh.code,
+      );
+      return ApiConnectionTestResult(
+        success: true,
+        message: '网关连接成功，已返回译文',
+        preview: preview,
+        latency: DateTime.now().difference(started),
+      );
+    } on TranslationException catch (error) {
+      return ApiConnectionTestResult(
+        success: false,
+        message: error.message,
+        latency: DateTime.now().difference(started),
+      );
+    } on Object catch (error) {
+      return ApiConnectionTestResult(
+        success: false,
+        message: '连接失败：$error',
+        latency: DateTime.now().difference(started),
+      );
+    } finally {
+      engine.close();
+    }
   }
 
   /// Tests form values without saving them first.

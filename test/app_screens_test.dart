@@ -13,6 +13,10 @@ import 'package:translation_app/services/local_store.dart';
 import 'package:translation_app/state/library_controller.dart';
 import 'package:translation_app/state/settings_controller.dart';
 import 'package:translation_app/state/translation_controller.dart';
+import 'package:translation_app/state/tts_controller.dart';
+import 'package:translation_app/widgets/tts_player_sheet.dart';
+
+import 'support/fake_speech_engine.dart';
 
 Book _book() {
   return Book(
@@ -49,6 +53,8 @@ void main() {
   late SettingsController settings;
   late LibraryController library;
   late TranslationController translation;
+  late TtsController tts;
+  late FakeSpeechEngine speechEngine;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -59,6 +65,8 @@ void main() {
     settings = SettingsController(preferences: preferences);
     library = LibraryController(store: store);
     translation = TranslationController(store: store);
+    speechEngine = FakeSpeechEngine();
+    tts = TtsController(engine: speechEngine);
   });
 
   tearDown(() async {
@@ -86,6 +94,7 @@ void main() {
           ChangeNotifierProvider<TranslationController>.value(
             value: translation,
           ),
+          ChangeNotifierProvider<TtsController>.value(value: tts),
         ],
         child: MaterialApp(theme: AppTheme.build(), home: child),
       ),
@@ -150,6 +159,27 @@ void main() {
     expect(find.text('保存配置'), findsOneWidget);
   });
 
+  testWidgets('TTS player exposes speed, sleep timer and transport', (
+    tester,
+  ) async {
+    final book = _book();
+    await tts.startChapter(book, 0);
+    expect(speechEngine.spoken, isNotEmpty);
+
+    await pumpPhone(
+      tester,
+      Scaffold(body: TtsPlayerSheet(book: book)),
+    );
+
+    expect(find.text('听书'), findsOneWidget);
+    expect(find.text('第一章 潮声'), findsOneWidget);
+    expect(find.text('1.0x'), findsOneWidget);
+    expect(find.text('定时关闭'), findsOneWidget);
+    expect(find.text('自动下一章'), findsOneWidget);
+    expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.skip_next_rounded), findsOneWidget);
+  });
+
   testWidgets('root navigation separates reading from settings', (
     tester,
   ) async {
@@ -166,6 +196,7 @@ void main() {
         settingsController: settings,
         libraryController: library,
         translationController: translation,
+        ttsController: tts,
       ),
     );
     await tester.pumpAndSettle();
