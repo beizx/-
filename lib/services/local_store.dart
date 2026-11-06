@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -146,7 +147,7 @@ class LocalStore {
     final file = File(p.join(_booksDirectory.path, '${_safeId(bookId)}.json'));
     if (!await file.exists()) return null;
     try {
-      final decoded = jsonDecode(await file.readAsString());
+      final decoded = await _decodeJson(await file.readAsString());
       if (decoded is! Map) return null;
       return Book.fromJson(Map<String, Object?>.from(decoded));
     } on Object {
@@ -186,7 +187,7 @@ class LocalStore {
     final file = _translationFile(bookId, language);
     if (!await file.exists()) return null;
     try {
-      final decoded = jsonDecode(await file.readAsString());
+      final decoded = await _decodeJson(await file.readAsString());
       if (decoded is! Map) return null;
       return TranslationRecord.fromJson(Map<String, Object?>.from(decoded));
     } on Object {
@@ -212,7 +213,7 @@ class LocalStore {
     final file = _draftFile(bookId, language);
     if (!await file.exists()) return null;
     try {
-      final decoded = jsonDecode(await file.readAsString());
+      final decoded = await _decodeJson(await file.readAsString());
       if (decoded is! Map) return null;
       return TranslationDraft.fromJson(Map<String, Object?>.from(decoded));
     } on Object {
@@ -283,6 +284,18 @@ class LocalStore {
       }
     });
     return next;
+  }
+
+  /// Large book and translation files are decoded off the UI isolate.
+  /// Short files stay inline because spawning an isolate costs more than
+  /// parsing them.
+  static const jsonDecodeOffloadBytes = 48 * 1024;
+
+  Future<Object?> _decodeJson(String raw) {
+    if (raw.length < jsonDecodeOffloadBytes) {
+      return Future<Object?>.value(jsonDecode(raw));
+    }
+    return Isolate.run(() => jsonDecode(raw) as Object?);
   }
 
   Future<void> _performWrite(File file, Object data) async {

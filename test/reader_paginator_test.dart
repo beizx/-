@@ -103,6 +103,40 @@ void main() {
     expect(pagination.pages.length, lessThanOrEqualTo(500));
   });
 
+  test('pagination job lays out only the requested paragraph budget', () {
+    final text = List.generate(
+      40,
+      (index) => '第${index + 1}段。${'海风与灯塔。' * 8}',
+    ).join('\n');
+    final job = ReaderPaginationJob.start(
+      text: text,
+      textStyle: style,
+      maxWidth: 320,
+      pageHeight: 300,
+      paragraphSpacing: 8,
+      firstLineIndent: 2,
+    );
+
+    expect(job.pump(paragraphBudget: 3), isFalse);
+    expect(job.lastPumpLaidOut, 3);
+    expect(ReaderPaginationJob.debugLastPumpLaidOut, 3);
+
+    while (!job.pump(paragraphBudget: 3)) {}
+    final full = ReaderPaginator.paginate(
+      text: text,
+      textStyle: style,
+      maxWidth: 320,
+      pageHeight: 300,
+      paragraphSpacing: 8,
+      firstLineIndent: 2,
+    );
+    expect(job.snapshot().pages.length, full.pages.length);
+    expect(
+      job.snapshot().displayParagraphs.length,
+      full.displayParagraphs.length,
+    );
+  });
+
   test('empty text produces no pages', () {
     final pagination = ReaderPaginator.paginate(
       text: '',

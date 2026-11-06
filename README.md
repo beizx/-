@@ -1,4 +1,4 @@
-# Beizx的阅读器 v1.4.3
+# Beizx的阅读器 v1.4.4
 
 本地优先的 **TXT / EPUB 小说阅读器**，使用 Flutter 构建，支持 Android 与 iOS。阅读是主角，翻译是一个随时可用的附加功能。
 
@@ -25,7 +25,7 @@
 
 ## 安装包
 
-当前 Android 安装包：`artifacts/BeizxReader-v1.4.3.apk`（Release 构建，约 64.7 MB；沿用 debug 签名，仅适合本地安装测试）。校验值见 `artifacts/SHA256SUMS.txt`。
+当前 Android 安装包：`/opt/cursor/artifacts/BeizxReader-v1.4.4.apk`（Release 构建，64,747,016 字节；沿用 debug 签名，仅适合本地安装测试）。SHA-256：`bf35aa94017a406473b13031947fc18ea849fb15dfea5dac05cb3c7cb43de10c`。包内 `versionName` 为 `1.4.4`，`versionCode` 为 `11`。
 
 > v1.4.1 新增 `audio_service` / `audio_session` 原生依赖与后台播放配置，已随本次构建打包；重新构建时同样使用 `tool/build_android.ps1`。
 
@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_android.ps1
 
 > 目录联接（junction）和映射磁盘仍会被 Flutter 还原成中文真实路径，不能绕过 AOT 限制；暂存目录必须是真实的纯 ASCII 路径。脚本默认使用 `%LOCALAPPDATA%\Temp\translation_app_build_ascii`，并从 `pubspec.yaml` 自动读取版本号生成 APK 文件名。
 
-构建产物位于 `artifacts/BeizxReader-v1.4.3.apk`，同时复制到 `build/app/outputs/flutter-apk/app-release.apk`。
+v1.4.4 在 Linux 上用 `flutter build apk --release` 构建（本环境没有 Windows 的 `tool/build_android.ps1`）。产物位于 `build/app/outputs/flutter-apk/app-release.apk`，并复制为 `/opt/cursor/artifacts/BeizxReader-v1.4.4.apk`。
 
 > 当前 `release` 构建沿用 Flutter 模板的 debug 签名，仅供本地安装与测试。正式上架 / 分发前，请在 `android/app/build.gradle.kts` 中配置自己的 keystore 签名。
 

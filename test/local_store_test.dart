@@ -142,6 +142,32 @@ void main() {
     },
   );
 
+  test(
+    'round-trips a book large enough to decode off the UI isolate',
+    () async {
+      final text = '海风吹过灯塔。' * 8000;
+      final book = Book(
+        meta: BookMeta(
+          id: 'book_large',
+          title: '长章',
+          author: '未知作者',
+          fileName: '长章.txt',
+          format: BookFormat.txt,
+          chapterCount: 1,
+          charCount: text.length,
+          importedAt: DateTime(2026, 11, 6),
+        ),
+        chapters: [
+          BookChapter(id: 'chapter_0', index: 0, title: '正文', text: text),
+        ],
+      );
+      await store.saveBook(book);
+      final loaded = await store.loadBook('book_large');
+      expect(loaded, isNotNull);
+      expect(loaded!.chapters.single.text, text);
+    },
+  );
+
   test('keeps unknown or corrupt entries out of the library', () async {
     await File(p.join(root.path, 'library.json')).writeAsString('[{}]');
     expect(await store.loadLibrary(), isEmpty);
