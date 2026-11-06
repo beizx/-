@@ -1,13 +1,17 @@
+import 'dart:async';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../core/theme/app_theme.dart';
 import '../core/utils/text_utils.dart';
 import '../models/reader_settings.dart';
 import '../services/reader/reader_paginator.dart';
+import '../services/reader/reader_scroll_layout.dart';
 
 TextStyle readerBodyStyle(ReaderPreferences reader) {
   return TextStyle(
@@ -41,6 +45,103 @@ int? volumeKeyDirection(LogicalKeyboardKey key) {
   return null;
 }
 
+/// Scroll positions are reported when the visible percent changes, at the
+/// ends, on a short interval, or when the gesture ends. Pixel-by-pixel
+/// callbacks are what made long chapters stutter.
+bool shouldReportReadingFraction({
+  required double? previous,
+  required DateTime? previousAt,
+  required double next,
+  required DateTime now,
+  bool force = false,
+  Duration minInterval = const Duration(milliseconds: 250),
+}) {
+  if (force || previous == null) return true;
+  if ((next - previous).abs() < 1e-9) return false;
+  if (next <= 0.0005 || next >= 0.9995) return true;
+  if ((previous * 100).round() != (next * 100).round()) return true;
+  final at = previousAt;
+  if (at == null) return true;
+  return now.difference(at) >= minInterval;
+}
+
+/// Spoken sentence plus the paragraph that owns it.
+///
+/// Paragraph listeners are notified only for the paragraph that lost the
+/// highlight and the one that gained it. The other paragraphs do no work.
+class ReaderSpeechHighlight implements ValueListenable<String?> {
+  final Set<VoidCallback> _global = <VoidCallback>{};
+  final Map<int, Set<VoidCallback>> _byParagraph = <int, Set<VoidCallback>>{};
+  String? _text;
+  int? _paragraph;
+
+  @override
+  String? get value => _text;
+
+  int? get paragraphIndex => _paragraph;
+
+  @override
+  void addListener(VoidCallback listener) => _global.add(listener);
+
+  @override
+  void removeListener(VoidCallback listener) => _global.remove(listener);
+
+  void addParagraphListener(int index, VoidCallback listener) {
+    (_byParagraph[index] ??= <VoidCallback>{}).add(listener);
+  }
+
+  void removeParagraphListener(int index, VoidCallback listener) {
+    final set = _byParagraph[index];
+    if (set == null) return;
+    set.remove(listener);
+    if (set.isEmpty) _byParagraph.remove(index);
+  }
+
+  void update({String? text, int? paragraphIndex}) {
+    if (text == _text && paragraphIndex == _paragraph) return;
+    final previous = _paragraph;
+    _text = text;
+    _paragraph = paragraphIndex;
+    if (paragraphIndex == null) {
+      if (previous != null) {
+        _notifyParagraph(previous);
+      } else {
+        _notifyAllParagraphs();
+      }
+    } else if (previous == null) {
+      _notifyParagraph(paragraphIndex);
+    } else {
+      _notifyParagraph(previous);
+      if (previous != paragraphIndex) _notifyParagraph(paragraphIndex);
+    }
+    _notify(_global);
+  }
+
+  void dispose() {
+    _global.clear();
+    _byParagraph.clear();
+  }
+
+  void _notifyAllParagraphs() {
+    final callbacks = <VoidCallback>[
+      for (final set in _byParagraph.values) ...set,
+    ];
+    _notify(callbacks);
+  }
+
+  void _notifyParagraph(int index) {
+    final set = _byParagraph[index];
+    if (set == null || set.isEmpty) return;
+    _notify(set);
+  }
+
+  void _notify(Iterable<VoidCallback> listeners) {
+    for (final listener in List<VoidCallback>.of(listeners)) {
+      listener();
+    }
+  }
+}
+
 TextStyle readerTitleStyle(ReaderPreferences reader) {
   return TextStyle(
     fontFamily: AppTheme.serif,
@@ -72,6 +173,10 @@ class ReaderScrollView extends StatefulWidget {
     this.onNextChapter,
     this.navigation,
     this.highlight,
+    this.prefetchText,
+    this.prefetchTitle,
+    this.prefetchTranslation = false,
+    this.prefetchHasNext = false,
   });
 
   final String chapterTitle;
@@ -88,6 +193,12 @@ class ReaderScrollView extends StatefulWidget {
   final VoidCallback? onNextChapter;
   final ReaderNavigationHandle? navigation;
 
+  /// Next chapter, measured while idle so a swipe does not lay it out inline.
+  final String? prefetchText;
+  final String? prefetchTitle;
+  final bool prefetchTranslation;
+  final bool prefetchHasNext;
+
   /// Utterance currently being read by the TTS engine.
   ///
   /// A listenable instead of a plain string: the reader no longer rebuilds the
@@ -102,21 +213,25 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
   final ScrollController _controller = ScrollController();
   Offset? _downPosition;
   bool _restored = false;
-
-  /// Paragraph splitting is pure and relatively expensive on long chapters, so
-  /// it is cached instead of running on every build.
-  List<String> _paragraphs = const [];
-  String _paragraphKey = '';
-
-  /// `text.runes.length` is O(n); the chapter header shows it on every build.
-  int _charCount = 0;
+  ReaderScrollLayout? _layout;
+  String? _layoutKey;
+  ReaderScrollLayoutJob? _job;
+  String? _pendingKey;
+  int _generation = 0;
+  double _textWidth = 760;
+  TextScaler _scaler = TextScaler.noScaling;
+  TextStyle _ambient = const TextStyle();
+  double? _lastReported;
+  DateTime? _lastReportedAt;
+  double? _pendingExact;
+  String? _prefetchKey;
+  int _prefetchGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_handleScroll);
     widget.navigation?.attach(_turnBy);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _restore());
   }
 
   @override
@@ -159,21 +274,8 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
     }
   }
 
-  void _syncParagraphs() {
-    final key =
-        '${widget.text.length}-${widget.text.hashCode}-'
-        '${widget.reader.firstLineIndent}';
-    if (key == _paragraphKey) return;
-    _paragraphKey = key;
-    _paragraphs = ReaderPaginator.displayParagraphs(
-      widget.text,
-      firstLineIndent: widget.reader.firstLineIndent,
-    );
-    _charCount = widget.text.runes.length;
-  }
-
   void _restore() {
-    if (!mounted) return;
+    if (!mounted || _restored || _layout == null) return;
     if (_controller.hasClients) {
       final max = _controller.position.maxScrollExtent;
       if (max > 0 && widget.initialFraction > 0.001) {
@@ -183,30 +285,329 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
     _restored = true;
   }
 
+  double _readFraction() {
+    if (!_controller.hasClients) return widget.initialFraction;
+    final max = _controller.position.maxScrollExtent;
+    if (max <= 0) return 1;
+    return (_controller.offset / max).clamp(0.0, 1.0);
+  }
+
+  void _emitFraction(double fraction, DateTime now) {
+    _lastReported = fraction;
+    _lastReportedAt = now;
+    _pendingExact = null;
+    widget.onFractionChanged(fraction);
+  }
+
   void _handleScroll() {
     if (!_restored || !_controller.hasClients) return;
-    final max = _controller.position.maxScrollExtent;
-    final fraction = max <= 0
-        ? 1.0
-        : (_controller.offset / max).clamp(0.0, 1.0);
-    widget.onFractionChanged(fraction);
+    final fraction = _readFraction();
+    _pendingExact = fraction;
+    final now = DateTime.now();
+    if (!shouldReportReadingFraction(
+      previous: _lastReported,
+      previousAt: _lastReportedAt,
+      next: fraction,
+      now: now,
+    )) {
+      return;
+    }
+    _emitFraction(fraction, now);
+  }
+
+  bool _onScrollNotice(ScrollNotification notification) {
+    if (notification is! ScrollEndNotification || !_restored) return false;
+    final fraction = _pendingExact ?? _readFraction();
+    if (_lastReported != null && (fraction - _lastReported!).abs() < 1e-9) {
+      return false;
+    }
+    _emitFraction(fraction, DateTime.now());
+    return false;
   }
 
   @override
   void dispose() {
+    _generation++;
+    _prefetchGeneration++;
     widget.navigation?.detach(_turnBy);
     _controller.dispose();
     super.dispose();
   }
 
+  String _cacheKey({
+    required String text,
+    required String title,
+    required bool translation,
+    required bool hasNext,
+    required ReaderPreferences reader,
+    required TextAlign align,
+  }) {
+    final style = readerBodyStyle(reader);
+    return [
+      text.length,
+      text.hashCode,
+      title.length,
+      title.hashCode,
+      reader.firstLineIndent.toStringAsFixed(1),
+      _textWidth.toStringAsFixed(1),
+      style.fontSize?.toStringAsFixed(2),
+      style.height?.toStringAsFixed(2),
+      style.fontWeight?.value,
+      style.fontFamily,
+      style.letterSpacing?.toStringAsFixed(2),
+      _scaler.scale(1).toStringAsFixed(3),
+      _ambient.fontSize?.toStringAsFixed(2),
+      _ambient.height?.toStringAsFixed(2),
+      _ambient.fontFamily,
+      align.name,
+      reader.paragraphSpacing.toStringAsFixed(1),
+      translation,
+      hasNext,
+    ].join('#');
+  }
+
+  void _ensureLayout(double textWidth, TextScaler scaler, TextAlign align) {
+    _textWidth = textWidth;
+    _scaler = scaler;
+    final reader = widget.reader;
+    final key = _cacheKey(
+      text: widget.text,
+      title: widget.chapterTitle,
+      translation: widget.isTranslation,
+      hasNext: widget.hasNextChapter,
+      reader: reader,
+      align: align,
+    );
+    if (_layout != null && _layoutKey == key) return;
+    final cached = ReaderLayoutCache.scroll.get(key);
+    if (cached != null) {
+      _commitLayout(key, cached, duringBuild: true);
+      return;
+    }
+    if (_pendingKey == key) return;
+    _pendingKey = key;
+    final generation = ++_generation;
+    if (widget.text.length >= ReaderLayoutBudget.isolateCharThreshold) {
+      unawaited(
+        _prepareOffIsolate(
+          generation,
+          key,
+          widget.text,
+          reader.firstLineIndent,
+          align,
+        ),
+      );
+      return;
+    }
+    _beginJob(
+      key,
+      prepareReaderText(widget.text, reader.firstLineIndent),
+      align,
+      duringBuild: true,
+      generation: generation,
+    );
+  }
+
+  Future<void> _prepareOffIsolate(
+    int generation,
+    String key,
+    String text,
+    double indent,
+    TextAlign align,
+  ) async {
+    PreparedReaderText prepared;
+    try {
+      prepared = await Isolate.run(() => prepareReaderText(text, indent));
+    } catch (_) {
+      prepared = prepareReaderText(text, indent);
+    }
+    if (!mounted || generation != _generation) return;
+    _beginJob(key, prepared, align, duringBuild: false, generation: generation);
+  }
+
+  void _beginJob(
+    String key,
+    PreparedReaderText prepared,
+    TextAlign align, {
+    required bool duringBuild,
+    required int generation,
+  }) {
+    if (!mounted || generation != _generation) return;
+    final reader = widget.reader;
+    final job = _jobFor(
+      prepared: prepared,
+      title: widget.chapterTitle,
+      translation: widget.isTranslation,
+      hasNext: widget.hasNextChapter,
+      align: align,
+      reader: reader,
+    );
+    if (prepared.paragraphs.length <= ReaderLayoutBudget.syncParagraphLimit) {
+      if (!job.isDone) {
+        // Chrome measurement consumes one unit of the budget.
+        job.pump(paragraphBudget: prepared.paragraphs.length + 1);
+      }
+      _commitLayout(key, job.snapshot(), duringBuild: duringBuild);
+      return;
+    }
+    _job = job;
+    _pendingKey = key;
+    _scheduleFrame(_pumpJob, generation);
+  }
+
+  ReaderScrollLayoutJob _jobFor({
+    required PreparedReaderText prepared,
+    required String title,
+    required bool translation,
+    required bool hasNext,
+    required TextAlign align,
+    required ReaderPreferences reader,
+  }) {
+    final label = translation
+        ? '机器翻译 · 建议对照原文阅读'
+        : '${formatCharacterCount(prepared.charCount)}字';
+    return ReaderScrollLayoutJob(
+      paragraphs: prepared.paragraphs,
+      charCount: prepared.charCount,
+      bodyStyle: readerBodyStyle(reader),
+      titleStyle: readerTitleStyle(reader),
+      metaStyle: TextStyle(fontSize: 10.5, color: reader.skin.secondary),
+      textWidth: _textWidth,
+      textAlign: align,
+      textScaler: _scaler,
+      paragraphSpacing: reader.paragraphSpacing,
+      chapterTitle: title,
+      metaLabel: label,
+      hasNextChapter: hasNext,
+      ambient: _ambient,
+    );
+  }
+
+  void _pumpJob(int generation) {
+    final job = _job;
+    if (!mounted || job == null || generation != _generation) return;
+    final done = job.pump(
+      paragraphBudget: ReaderLayoutBudget.paragraphsPerFrame,
+    );
+    if (!done) {
+      _scheduleFrame(_pumpJob, generation);
+      return;
+    }
+    _commitLayout(_pendingKey ?? '', job.snapshot(), duringBuild: false);
+  }
+
+  void _commitLayout(
+    String key,
+    ReaderScrollLayout layout, {
+    required bool duringBuild,
+  }) {
+    _layout = layout;
+    _layoutKey = key;
+    _job = null;
+    _restored = false;
+    ReaderLayoutCache.scroll.put(key, layout);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restore());
+    _schedulePrefetch();
+    if (!duringBuild && mounted) setState(() {});
+  }
+
+  void _schedulePrefetch() {
+    final text = widget.prefetchText;
+    if (text == null || _layout == null) return;
+    final reader = widget.reader;
+    final align = reader.justify ? TextAlign.justify : TextAlign.start;
+    final key = _cacheKey(
+      text: text,
+      title: widget.prefetchTitle ?? '',
+      translation: widget.prefetchTranslation,
+      hasNext: widget.prefetchHasNext,
+      reader: reader,
+      align: align,
+    );
+    if (ReaderLayoutCache.scroll.get(key) != null || _prefetchKey == key) {
+      return;
+    }
+    _prefetchKey = key;
+    final generation = ++_prefetchGeneration;
+    final prepared = prepareReaderText(text, reader.firstLineIndent);
+    final job = _jobFor(
+      prepared: prepared,
+      title: widget.prefetchTitle ?? '',
+      translation: widget.prefetchTranslation,
+      hasNext: widget.prefetchHasNext,
+      align: align,
+      reader: reader,
+    );
+    _stepPrefetch(generation, key, job);
+  }
+
+  void _scheduleFrame(void Function(int generation) step, int generation) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => step(generation));
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  void _stepPrefetch(int generation, String key, ReaderScrollLayoutJob job) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _prefetchGeneration) return;
+      if (ReaderLayoutCache.scroll.get(key) != null) return;
+      final done = job.pump(
+        paragraphBudget: ReaderLayoutBudget.paragraphsPerFrame,
+      );
+      if (!done) {
+        _stepPrefetch(generation, key, job);
+        WidgetsBinding.instance.scheduleFrame();
+        return;
+      }
+      ReaderLayoutCache.scroll.put(key, job.snapshot());
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
   @override
   Widget build(BuildContext context) {
-    _syncParagraphs();
     final reader = widget.reader;
+    final align = reader.justify ? TextAlign.justify : TextAlign.start;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewport = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 760.0;
+        final textWidth = math.min(
+          760.0,
+          math.max(viewport - widget.contentPadding.horizontal, 40.0),
+        );
+        final scaler = MediaQuery.textScalerOf(context);
+        _ambient = DefaultTextStyle.of(context).style;
+        _ensureLayout(textWidth, scaler, align);
+        final layout = _layout;
+        if (layout == null || _layoutKey == null) {
+          return Padding(
+            padding: widget.contentPadding,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: textWidth,
+                child: Text(
+                  widget.chapterTitle,
+                  style: readerTitleStyle(reader),
+                ),
+              ),
+            ),
+          );
+        }
+        return _buildList(reader, layout, align);
+      },
+    );
+  }
+
+  Widget _buildList(
+    ReaderPreferences reader,
+    ReaderScrollLayout layout,
+    TextAlign align,
+  ) {
     final skin = reader.skin;
     final bodyStyle = readerBodyStyle(reader);
-    final align = reader.justify ? TextAlign.justify : TextAlign.start;
-
+    final highlightColor = skin.accent.withValues(alpha: 0.28);
     return Listener(
       onPointerDown: (event) => _downPosition = event.position,
       onPointerUp: (event) {
@@ -216,100 +617,148 @@ class _ReaderScrollViewState extends State<ReaderScrollView> {
         if ((event.position - start).distance > 12) return;
         widget.onToggleChrome();
       },
-      child: SingleChildScrollView(
-        controller: _controller,
-        padding: widget.contentPadding,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: RepaintBoundary(
-              child: SelectionArea(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(widget.chapterTitle, style: readerTitleStyle(reader)),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 2,
-                          color: skin.accent.withValues(alpha: 0.7),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          widget.isTranslation
-                              ? '机器翻译 · 建议对照原文阅读'
-                              : '${formatCharacterCount(_charCount)}字',
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            color: skin.secondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    if (_paragraphs.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 48),
-                        child: Center(
-                          child: Text(
-                            widget.isTranslation ? '这一章暂时没有译文' : '这一章没有正文',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: skin.secondary,
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      for (final paragraph in _paragraphs)
-                        Padding(
-                          padding: EdgeInsets.only(
-                            bottom: reader.paragraphSpacing,
-                          ),
-                          child: ReaderHighlightedParagraph(
-                            text: paragraph,
-                            style: bodyStyle,
-                            align: align,
-                            highlight: widget.highlight,
-                            highlightColor: skin.accent.withValues(alpha: 0.28),
-                            highlightTextColor: skin.text,
-                          ),
-                        ),
-                    const SizedBox(height: 26),
-                    Center(
-                      child: Column(
-                        children: [
-                          Container(width: 36, height: 1, color: skin.line),
-                          const SizedBox(height: 10),
-                          Text(
-                            '本章完',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              letterSpacing: 3,
-                              color: skin.secondary,
-                            ),
-                          ),
-                          if (widget.hasNextChapter) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              '左右滑动进入下一章',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: skin.secondary.withValues(alpha: 0.7),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _onScrollNotice,
+        child: ListView.builder(
+          controller: _controller,
+          padding: widget.contentPadding,
+          itemCount: layout.itemCount,
+          scrollCacheExtent: const ScrollCacheExtent.pixels(360),
+          addAutomaticKeepAlives: false,
+          itemExtentBuilder: (index, dimensions) => layout.extentOf(index),
+          itemBuilder: (context, index) {
+            return Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: layout.textWidth,
+                child: _item(
+                  index,
+                  layout,
+                  reader,
+                  skin,
+                  bodyStyle,
+                  align,
+                  highlightColor,
                 ),
               ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _item(
+    int index,
+    ReaderScrollLayout layout,
+    ReaderPreferences reader,
+    ReaderSkin skin,
+    TextStyle bodyStyle,
+    TextAlign align,
+    Color highlightColor,
+  ) {
+    if (index == 0) return _header(reader, skin, layout);
+    if (layout.paragraphs.isEmpty) {
+      if (index == 1) return _empty(skin, layout);
+      return _footer(skin, layout);
+    }
+    if (index == layout.paragraphs.length + 1) return _footer(skin, layout);
+    final paragraphIndex = index - 1;
+    return Padding(
+      padding: EdgeInsets.only(bottom: layout.paragraphSpacing),
+      child: SelectionArea(
+        child: ReaderHighlightedParagraph(
+          text: layout.paragraphs[paragraphIndex],
+          paragraphIndex: paragraphIndex,
+          style: bodyStyle,
+          align: align,
+          highlight: widget.highlight,
+          highlightColor: highlightColor,
+          highlightTextColor: skin.text,
+        ),
+      ),
+    );
+  }
+
+  Widget _header(
+    ReaderPreferences reader,
+    ReaderSkin skin,
+    ReaderScrollLayout layout,
+  ) {
+    final label = widget.isTranslation
+        ? '机器翻译 · 建议对照原文阅读'
+        : '${formatCharacterCount(layout.charCount)}字';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(widget.chapterTitle, style: readerTitleStyle(reader)),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Container(
+              width: 32,
+              height: 2,
+              color: skin.accent.withValues(alpha: 0.7),
             ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(fontSize: 10.5, color: skin.secondary),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _empty(ReaderSkin skin, ReaderScrollLayout layout) {
+    return SizedBox(
+      height: layout.emptyHeight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        child: Center(
+          child: Text(
+            widget.isTranslation ? '这一章暂时没有译文' : '这一章没有正文',
+            style: TextStyle(fontSize: 13, color: skin.secondary),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _footer(ReaderSkin skin, ReaderScrollLayout layout) {
+    return SizedBox(
+      height: layout.footerHeight,
+      child: Column(
+        children: [
+          const SizedBox(height: 26),
+          Center(
+            child: Column(
+              children: [
+                Container(width: 36, height: 1, color: skin.line),
+                const SizedBox(height: 10),
+                Text(
+                  '本章完',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    letterSpacing: 3,
+                    color: skin.secondary,
+                  ),
+                ),
+                if (widget.hasNextChapter) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '左右滑动进入下一章',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: skin.secondary.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -370,6 +819,7 @@ class ReaderHighlightedParagraph extends StatelessWidget {
     required this.style,
     required this.align,
     required this.highlight,
+    this.paragraphIndex,
     this.highlightColor,
     this.highlightTextColor,
   });
@@ -378,6 +828,10 @@ class ReaderHighlightedParagraph extends StatelessWidget {
   final TextStyle style;
   final TextAlign align;
   final ValueListenable<String?>? highlight;
+
+  /// When set together with a [ReaderSpeechHighlight], only this paragraph is
+  /// told about a sentence that belongs to it.
+  final int? paragraphIndex;
   final Color? highlightColor;
   final Color? highlightTextColor;
 
@@ -386,6 +840,19 @@ class ReaderHighlightedParagraph extends StatelessWidget {
     final plain = Text(text, style: style, textAlign: align);
     final listenable = highlight;
     if (listenable == null) return plain;
+    final index = paragraphIndex;
+    if (listenable is ReaderSpeechHighlight && index != null) {
+      return _ScopedParagraphHighlight(
+        bus: listenable,
+        paragraphIndex: index,
+        text: text,
+        style: style,
+        align: align,
+        plain: plain,
+        highlightColor: highlightColor,
+        highlightTextColor: highlightTextColor,
+      );
+    }
     return ValueListenableBuilder<String?>(
       valueListenable: listenable,
       child: plain,
@@ -401,6 +868,80 @@ class ReaderHighlightedParagraph extends StatelessWidget {
           highlightTextColor: highlightTextColor,
         );
       },
+    );
+  }
+}
+
+class _ScopedParagraphHighlight extends StatefulWidget {
+  const _ScopedParagraphHighlight({
+    required this.bus,
+    required this.paragraphIndex,
+    required this.text,
+    required this.style,
+    required this.align,
+    required this.plain,
+    this.highlightColor,
+    this.highlightTextColor,
+  });
+
+  final ReaderSpeechHighlight bus;
+  final int paragraphIndex;
+  final String text;
+  final TextStyle style;
+  final TextAlign align;
+  final Widget plain;
+  final Color? highlightColor;
+  final Color? highlightTextColor;
+
+  @override
+  State<_ScopedParagraphHighlight> createState() =>
+      _ScopedParagraphHighlightState();
+}
+
+class _ScopedParagraphHighlightState extends State<_ScopedParagraphHighlight> {
+  @override
+  void initState() {
+    super.initState();
+    widget.bus.addParagraphListener(widget.paragraphIndex, _onHighlight);
+  }
+
+  @override
+  void didUpdateWidget(_ScopedParagraphHighlight oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.bus, widget.bus) ||
+        oldWidget.paragraphIndex != widget.paragraphIndex) {
+      oldWidget.bus.removeParagraphListener(
+        oldWidget.paragraphIndex,
+        _onHighlight,
+      );
+      widget.bus.addParagraphListener(widget.paragraphIndex, _onHighlight);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.bus.removeParagraphListener(widget.paragraphIndex, _onHighlight);
+    super.dispose();
+  }
+
+  void _onHighlight() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final needle = widget.bus.value?.trim() ?? '';
+    final active = widget.bus.paragraphIndex == widget.paragraphIndex;
+    if (!active || needle.isEmpty || !widget.text.contains(needle)) {
+      return widget.plain;
+    }
+    return readerParagraphText(
+      widget.text,
+      style: widget.style,
+      align: widget.align,
+      highlightText: needle,
+      highlightColor: widget.highlightColor,
+      highlightTextColor: widget.highlightTextColor,
     );
   }
 }
@@ -425,6 +966,8 @@ class ReaderPageView extends StatefulWidget {
     this.selectable = false,
     this.navigation,
     this.highlight,
+    this.prefetchText,
+    this.prefetchTitle,
   });
 
   final String chapterTitle;
@@ -448,6 +991,11 @@ class ReaderPageView extends StatefulWidget {
   /// Sentence being read aloud, highlighted in place.
   final ValueListenable<String?>? highlight;
 
+  /// Laid out while idle so turning into the next chapter does not paginate
+  /// it on the gesture frame.
+  final String? prefetchText;
+  final String? prefetchTitle;
+
   @override
   State<ReaderPageView> createState() => _ReaderPageViewState();
 }
@@ -468,6 +1016,16 @@ class _ReaderPageViewState extends State<ReaderPageView> {
   /// so the TextPainter run is cached instead of repeated on every build.
   double _titleHeight = 0;
   String _titleHeightKey = '';
+  ReaderPaginationJob? _job;
+  String? _jobKey;
+  bool _paging = false;
+  String? _prefetchKey;
+  int _prefetchGeneration = 0;
+  Size _layoutSize = Size.zero;
+  double _contentWidth = 0;
+  double _bodyHeight = 0;
+  TextAlign _layoutAlign = TextAlign.start;
+  TextScaler _layoutScaler = TextScaler.noScaling;
 
   @override
   void initState() {
@@ -487,6 +1045,7 @@ class _ReaderPageViewState extends State<ReaderPageView> {
 
   @override
   void dispose() {
+    _prefetchGeneration++;
     widget.navigation?.detach(_turnPage);
     _controller?.dispose();
     super.dispose();
@@ -504,19 +1063,18 @@ class _ReaderPageViewState extends State<ReaderPageView> {
     return ((page + 1) / count).clamp(0.0, 1.0);
   }
 
-  void _ensureLayout(
-    ReaderPreferences reader,
-    Size size,
-    TextAlign align,
-    double titleHeight,
-    double bodyHeight,
-    TextScaler textScaler,
-  ) {
-    final titleKey = widget.chapterTitle;
-    final key = [
-      widget.text.length,
-      widget.text.hashCode,
-      titleKey,
+  String _paginationKey({
+    required String text,
+    required String title,
+    required Size size,
+    required TextAlign align,
+    required TextScaler textScaler,
+    required ReaderPreferences reader,
+  }) {
+    return [
+      text.length,
+      text.hashCode,
+      title,
       size.width.toStringAsFixed(1),
       size.height.toStringAsFixed(1),
       reader.layoutSignature,
@@ -529,23 +1087,46 @@ class _ReaderPageViewState extends State<ReaderPageView> {
       widget.contentPadding.right.toStringAsFixed(1),
       widget.contentPadding.bottom.toStringAsFixed(1),
     ].join('#');
+  }
 
-    if (key == _layoutKey) return;
+  void _ensureLayout(
+    ReaderPreferences reader,
+    Size size,
+    TextAlign align,
+    double titleHeight,
+    double bodyHeight,
+    TextScaler textScaler,
+  ) {
+    _layoutSize = size;
+    _layoutAlign = align;
+    _layoutScaler = textScaler;
+    _bodyHeight = bodyHeight;
+    _contentWidth = size.width - widget.contentPadding.horizontal;
+    final key = _paginationKey(
+      text: widget.text,
+      title: widget.chapterTitle,
+      size: size,
+      align: align,
+      textScaler: textScaler,
+      reader: reader,
+    );
 
-    final hadLayout = _layoutKey.isNotEmpty;
-    final fraction = hadLayout
-        ? _currentFraction
-        : widget.initialFraction.clamp(0.0, 1.0);
-    final style = readerBodyStyle(reader);
-    final contentWidth = size.width - widget.contentPadding.horizontal;
+    if (key == _layoutKey && _job == null) return;
+    final cached = ReaderLayoutCache.pagination.get(key);
+    if (cached != null) {
+      _installPagination(cached, key);
+      _schedulePagePrefetch();
+      return;
+    }
+    if (_job != null && _jobKey == key) return;
+
     final firstBodyHeight = titleHeight <= 0
         ? bodyHeight
         : math.max(bodyHeight - titleHeight - 42, 40.0);
-
-    _pagination = ReaderPaginator.paginate(
+    final job = ReaderPaginationJob.start(
       text: widget.text,
-      textStyle: style,
-      maxWidth: math.max(contentWidth, 40.0),
+      textStyle: readerBodyStyle(reader),
+      maxWidth: math.max(_contentWidth, 40.0),
       pageHeight: math.max(bodyHeight, 40.0),
       firstPageHeight: firstBodyHeight,
       paragraphSpacing: reader.paragraphSpacing,
@@ -553,7 +1134,33 @@ class _ReaderPageViewState extends State<ReaderPageView> {
       textAlign: align,
       textScaler: textScaler,
     );
+    if (job.isDone ||
+        job.paragraphCount <= ReaderLayoutBudget.syncParagraphLimit) {
+      if (!job.isDone) {
+        job.pump(paragraphBudget: math.max(job.paragraphCount, 1));
+      }
+      final result = job.snapshot();
+      ReaderLayoutCache.pagination.put(key, result);
+      _installPagination(result, key);
+      _schedulePagePrefetch();
+      return;
+    }
+    _job = job;
+    _jobKey = key;
+    _paging = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _pumpPagination());
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  void _installPagination(ReaderPagination pagination, String key) {
+    final hadLayout = _layoutKey.isNotEmpty;
+    final fraction = hadLayout
+        ? _currentFraction
+        : widget.initialFraction.clamp(0.0, 1.0);
+    _pagination = pagination;
     _layoutKey = key;
+    _job = null;
+    _paging = false;
     final count = _pagination.pages.length;
     _currentPage = _pageForFraction(count, fraction);
     _currentFraction = count <= 0 ? 0 : _fractionForPage(_currentPage, count);
@@ -568,6 +1175,81 @@ class _ReaderPageViewState extends State<ReaderPageView> {
         previousController.dispose();
       });
     }
+  }
+
+  void _pumpPagination() {
+    final job = _job;
+    if (!mounted || job == null) return;
+    final done = job.pump(
+      paragraphBudget: ReaderLayoutBudget.paragraphsPerFrame,
+    );
+    if (!done) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pumpPagination());
+      WidgetsBinding.instance.scheduleFrame();
+      return;
+    }
+    final key = _jobKey ?? '';
+    final result = job.snapshot();
+    ReaderLayoutCache.pagination.put(key, result);
+    setState(() => _installPagination(result, key));
+    _schedulePagePrefetch();
+  }
+
+  void _schedulePagePrefetch() {
+    final text = widget.prefetchText;
+    final title = widget.prefetchTitle;
+    if (text == null || title == null || _contentWidth <= 0) return;
+    final reader = widget.reader;
+    final key = _paginationKey(
+      text: text,
+      title: title,
+      size: _layoutSize,
+      align: _layoutAlign,
+      textScaler: _layoutScaler,
+      reader: reader,
+    );
+    if (ReaderLayoutCache.pagination.get(key) != null || _prefetchKey == key) {
+      return;
+    }
+    _prefetchKey = key;
+    final generation = ++_prefetchGeneration;
+    final titleHeight = _measureTitleHeight(
+      math.max(_contentWidth, 40),
+      readerTitleStyle(reader),
+      _layoutScaler,
+      title: title,
+    );
+    final firstBodyHeight = titleHeight <= 0
+        ? _bodyHeight
+        : math.max(_bodyHeight - titleHeight - 42, 40.0);
+    final job = ReaderPaginationJob.start(
+      text: text,
+      textStyle: readerBodyStyle(reader),
+      maxWidth: math.max(_contentWidth, 40.0),
+      pageHeight: math.max(_bodyHeight, 40.0),
+      firstPageHeight: firstBodyHeight,
+      paragraphSpacing: reader.paragraphSpacing,
+      firstLineIndent: reader.firstLineIndent,
+      textAlign: _layoutAlign,
+      textScaler: _layoutScaler,
+    );
+    _stepPagePrefetch(generation, key, job);
+  }
+
+  void _stepPagePrefetch(int generation, String key, ReaderPaginationJob job) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _prefetchGeneration) return;
+      if (ReaderLayoutCache.pagination.get(key) != null) return;
+      final done =
+          job.isDone ||
+          job.pump(paragraphBudget: ReaderLayoutBudget.paragraphsPerFrame);
+      if (!done) {
+        _stepPagePrefetch(generation, key, job);
+        return;
+      }
+      ReaderLayoutCache.pagination.put(key, job.snapshot());
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _requestChapter(int direction) {
@@ -682,11 +1364,13 @@ class _ReaderPageViewState extends State<ReaderPageView> {
   double _measureTitleHeight(
     double maxWidth,
     TextStyle style,
-    TextScaler textScaler,
-  ) {
-    if (widget.chapterTitle.trim().isEmpty) return 0;
+    TextScaler textScaler, {
+    String? title,
+  }) {
+    final measuredTitle = title ?? widget.chapterTitle;
+    if (measuredTitle.trim().isEmpty) return 0;
     final key = [
-      widget.chapterTitle,
+      measuredTitle,
       maxWidth.toStringAsFixed(1),
       style.fontSize?.toStringAsFixed(1) ?? '',
       style.height?.toStringAsFixed(2) ?? '',
@@ -697,7 +1381,7 @@ class _ReaderPageViewState extends State<ReaderPageView> {
     if (key == _titleHeightKey) return _titleHeight;
 
     final painter = TextPainter(
-      text: TextSpan(text: widget.chapterTitle, style: style),
+      text: TextSpan(text: measuredTitle, style: style),
       textDirection: TextDirection.ltr,
       textScaler: textScaler,
       maxLines: 3,
@@ -747,6 +1431,18 @@ class _ReaderPageViewState extends State<ReaderPageView> {
         final pages = _pagination.pages;
         final controller = _controller;
         if (pages.isEmpty || controller == null) {
+          if (_paging || _job != null) {
+            return Padding(
+              padding: widget.contentPadding,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  widget.chapterTitle,
+                  style: readerTitleStyle(reader),
+                ),
+              ),
+            );
+          }
           return Center(
             child: Text(
               widget.isTranslation ? '这一章暂时没有译文' : '这一章没有正文',
@@ -845,6 +1541,7 @@ class _ReaderPageViewState extends State<ReaderPageView> {
       fragments.add(
         ReaderHighlightedParagraph(
           text: fragment.textOf(_pagination.displayParagraphs),
+          paragraphIndex: fragment.paragraphIndex,
           style: bodyStyle,
           align: align,
           highlight: widget.highlight,

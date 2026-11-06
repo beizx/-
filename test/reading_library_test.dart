@@ -104,6 +104,30 @@ void main() {
     expect(library.bookmarksFor('book_library'), isEmpty);
   });
 
+  test(
+    'scroll saves can update progress without notifying listeners',
+    () async {
+      var notifications = 0;
+      library.addListener(() => notifications++);
+
+      await library.saveProgress(
+        'book_library',
+        2,
+        chapterFraction: 0.2,
+        notify: false,
+      );
+      expect(notifications, 0);
+      expect(library.progressFor('book_library')?.chapterFraction, 0.2);
+
+      final reloaded = LibraryController(store: store);
+      await reloaded.load();
+      expect(reloaded.progressFor('book_library')?.chapterIndex, 2);
+
+      await library.saveProgress('book_library', 2, chapterFraction: 0.8);
+      expect(notifications, 1);
+    },
+  );
+
   test('deleting a book also clears its progress and bookmarks', () async {
     await library.saveProgress('book_library', 1, chapterFraction: 0.4);
     await library.addBookmark(

@@ -85,4 +85,25 @@ void main() {
 
     expect(_text(tester, '灯塔仍亮着').textSpan, isNull);
   });
+
+  test('speech highlight notifies only the paragraphs that changed', () {
+    final bus = ReaderSpeechHighlight();
+    final calls = <int>[];
+    bus.addParagraphListener(0, () => calls.add(0));
+    bus.addParagraphListener(1, () => calls.add(1));
+    bus.addParagraphListener(2, () => calls.add(2));
+
+    bus.update(text: '第二句。', paragraphIndex: 1);
+    expect(calls, [1]);
+
+    calls.clear();
+    bus.update(text: '第三句。', paragraphIndex: 2);
+    expect(calls, containsAll(<int>[1, 2]));
+    expect(calls, isNot(contains(0)));
+
+    calls.clear();
+    bus.update(text: null, paragraphIndex: null);
+    expect(calls, [2]);
+    bus.dispose();
+  });
 }

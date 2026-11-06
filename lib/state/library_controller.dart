@@ -1,5 +1,7 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 
 import '../models/book.dart';
 import '../models/bookmark.dart';
@@ -62,6 +64,7 @@ class LibraryController extends ChangeNotifier {
     int chapterIndex, {
     double chapterFraction = 0,
     int addReadingSeconds = 0,
+    bool notify = true,
   }) async {
     final chapterCount =
         _books.where((book) => book.id == bookId).firstOrNull?.chapterCount ??
@@ -82,8 +85,12 @@ class LibraryController extends ChangeNotifier {
         updatedAt: DateTime.now(),
       ),
     };
+    if (notify) {
+      // After the current frame, so a reader dispose can refresh the shelf
+      // without calling setState on a widget that is still deactivating.
+      scheduleMicrotask(notifyListeners);
+    }
     await store.saveReadingProgress(_readingProgress);
-    notifyListeners();
   }
 
   Future<void> addBookmark(Bookmark bookmark) async {

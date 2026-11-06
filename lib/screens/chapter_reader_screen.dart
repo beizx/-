@@ -46,7 +46,9 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     with WidgetsBindingObserver {
   late int _index;
   late final PageController _chapterController;
-  late final ValueNotifier<double> _fraction;
+  double _preciseFraction = 0;
+  double _lastPersistedFraction = -1;
+  final ValueNotifier<int> _chapterPercent = ValueNotifier<int>(0);
 
   ReaderPreferences _reader = const ReaderPreferences();
   SettingsController? _settings;
@@ -69,9 +71,8 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
   Widget? _contentCache;
   String? _contentCacheKey;
 
-  /// Sentence being spoken, delivered outside the widget cache so 听书 does not
-  /// rebuild the chapter on every utterance.
-  final ValueNotifier<String?> _highlight = ValueNotifier<String?>(null);
+  /// Sentence being spoken. Only the paragraph that owns it is rebuilt.
+  final ReaderSpeechHighlight _highlight = ReaderSpeechHighlight();
   final ReaderNavigationHandle _navigation = ReaderNavigationHandle();
   final FocusNode _readerFocus = FocusNode(debugLabel: 'reader');
   DateTime? _lastVolumeAt;
@@ -87,7 +88,6 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
         : widget.book.chapters.length - 1;
     _index = widget.initialChapterIndex.clamp(0, lastIndex);
     _chapterController = PageController(initialPage: _index);
-    _fraction = ValueNotifier<double>(0);
     WidgetsBinding.instance.addObserver(this);
     _ticker = Timer.periodic(const Duration(seconds: 1), _tick);
     ReaderSystem.bindVolumeKeys(_onVolumeKey);
@@ -105,7 +105,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     _reader = _settings?.readerPreferences ?? const ReaderPreferences();
     final progress = _library?.progressFor(widget.book.id);
     if (progress != null && progress.chapterIndex == _index) {
-      _fraction.value = progress.safeChapterFraction;
+      _setFraction(progress.safeChapterFraction);
     }
     unawaited(ReaderSystem.keepScreenOn(_reader.keepScreenOn));
     _applySystemUi(_reader);
@@ -152,9 +152,17 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
   }
 
   void _syncHighlight() {
-    final next = _ttsHighlight;
-    if (next == _highlight.value) return;
-    _highlight.value = next;
+    final tts = _tts;
+    String? text;
+    int? paragraph;
+    if (tts != null &&
+        tts.isActive &&
+        tts.book?.id == widget.book.id &&
+        tts.chapterIndex == _index) {
+      text = tts.activeText;
+      paragraph = tts.activeParagraphIndex;
+    }
+    _highlight.update(text: text, paragraphIndex: paragraph);
   }
 
   bool _wasTtsPlaying = false;
@@ -173,7 +181,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     WidgetsBinding.instance.removeObserver(this);
     _tts?.removeListener(_handleTtsChanged);
     _ticker?.cancel();
-    unawaited(_persistProgress(force: true));
+    unawaited(_persistProgress(force: true, notify: true));
     unawaited(ReaderSystem.keepScreenOn(false));
     if (_volumeCapture) {
       unawaited(ReaderSystem.setVolumeKeyCapture(false));
@@ -181,7 +189,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     ReaderSystem.bindVolumeKeys(null);
     _restoreSystemChrome();
     _chapterController.dispose();
-    _fraction.dispose();
+    _chapterPercent.dispose();
     _highlight.dispose();
     _readerFocus.dispose();
     super.dispose();
@@ -201,6 +209,8 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       _sessionSeconds++;
       if (_sessionSeconds > 0 && _sessionSeconds % 60 == 0) {
         unawaited(_persistProgress(force: true));
+      } else if ((_preciseFraction - _lastPersistedFraction).abs() > 0.0005) {
+        unawaited(_persistProgress());
       }
     }
     final now = DateTime.now();
@@ -209,7 +219,10 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     }
   }
 
-  Future<void> _persistProgress({bool force = false}) async {
+  Future<void> _persistProgress({
+    bool force = false,
+    bool notify = false,
+  }) async {
     final library = _library;
     if (library == null || _chapterCount == 0) return;
     final now = DateTime.now();
@@ -221,26 +234,36 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     _lastPersist = now;
     final seconds = _sessionSeconds;
     _sessionSeconds = 0;
+    final fraction = _preciseFraction;
     await library.saveProgress(
       widget.book.id,
       _index,
-      chapterFraction: _fraction.value,
+      chapterFraction: fraction,
       addReadingSeconds: seconds,
+      notify: notify,
     );
+    _lastPersistedFraction = fraction;
+  }
+
+  void _setFraction(double value) {
+    _preciseFraction = value.clamp(0.0, 1.0);
+    final percent = (_preciseFraction * 100).round().clamp(0, 100);
+    if (_chapterPercent.value != percent) {
+      _chapterPercent.value = percent;
+    }
   }
 
   void _onFractionChanged(int index, double fraction) {
     if (index != _index) return;
     final next = fraction.clamp(0.0, 1.0);
-    if ((next - _fraction.value).abs() < 0.0005) return;
-    _fraction.value = next;
-    unawaited(_persistProgress());
+    if ((next - _preciseFraction).abs() < 1e-9) return;
+    _setFraction(next);
   }
 
   void _onSwipeChapter(int index) {
     if (index == _index) return;
     setState(() => _index = index);
-    _fraction.value = 0;
+    _setFraction(0);
     _syncHighlight();
     HapticFeedback.selectionClick();
     unawaited(_persistProgress(force: true));
@@ -267,8 +290,8 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     setState(() {
       _index = index;
       _positionToken++;
-      _fraction.value = toStart ? 0 : 0.999;
     });
+    _setFraction(toStart ? 0 : 0.999);
     _syncHighlight();
     unawaited(_persistProgress(force: true));
   }
@@ -279,8 +302,8 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     setState(() {
       _index = target;
       _positionToken++;
-      _fraction.value = bookmark.fraction;
     });
+    _setFraction(bookmark.fraction);
     _syncHighlight();
     if (_chapterController.hasClients) {
       _chapterController.jumpToPage(target);
@@ -340,7 +363,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       final existing = library.bookmarkNear(
         widget.book.id,
         _index,
-        _fraction.value,
+        _preciseFraction,
       );
       if (existing != null) {
         await library.removeBookmark(existing.id);
@@ -351,8 +374,8 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
         bookId: widget.book.id,
         chapterIndex: _index,
         chapterTitle: _chapter.title,
-        fraction: _fraction.value,
-        snippet: _snippetAt(_fraction.value),
+        fraction: _preciseFraction,
+        snippet: _snippetAt(_preciseFraction),
       );
       await library.addBookmark(bookmark);
       if (mounted) _showMessage('已把这一段收进书签');
@@ -409,7 +432,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       await tts.startChapter(
         widget.book,
         _index,
-        chapterFraction: _fraction.value,
+        chapterFraction: _preciseFraction,
       );
       if (mounted) await _maybeShowBackgroundGuide();
     }
@@ -572,15 +595,6 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
     return _contentCache!;
   }
 
-  /// Sentence currently read aloud, but only while it belongs to this chapter.
-  String? get _ttsHighlight {
-    final tts = _tts;
-    if (tts == null || !tts.isActive) return null;
-    if (tts.book?.id != widget.book.id) return null;
-    if (tts.chapterIndex != _index) return null;
-    return tts.activeText;
-  }
-
   Widget _buildContent(ReaderPreferences reader, EdgeInsets contentPadding) {
     if (_chapterCount == 0) {
       return Center(
@@ -611,11 +625,26 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
                 widget.translation?.chapterFor(chapter.id) != null,
             reader: reader,
             contentPadding: contentPadding,
-            initialFraction: index == _index ? _fraction.value : 0,
+            initialFraction: index == _index ? _preciseFraction : 0,
             onFractionChanged: (value) => _onFractionChanged(index, value),
             onToggleChrome: _toggleChrome,
             hasNextChapter: index < _chapterCount - 1,
             hasPreviousChapter: index > 0,
+            prefetchText: index == _index && index + 1 < _chapterCount
+                ? _textFor(index + 1, widget.book.chapters[index + 1])
+                : null,
+            prefetchTitle: index == _index && index + 1 < _chapterCount
+                ? widget.book.chapters[index + 1].title
+                : null,
+            prefetchTranslation:
+                index == _index &&
+                index + 1 < _chapterCount &&
+                _showTranslation &&
+                widget.translation?.chapterFor(
+                      widget.book.chapters[index + 1].id,
+                    ) !=
+                    null,
+            prefetchHasNext: index + 2 < _chapterCount,
             navigation: index == _index ? _navigation : null,
             onPreviousChapter: () {
               if (index > 0) _goToChapter(index - 1, toStart: false);
@@ -642,7 +671,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
           widget.translation?.chapterFor(_chapter.id) != null,
       reader: reader,
       contentPadding: contentPadding,
-      initialFraction: _fraction.value,
+      initialFraction: _preciseFraction,
       onFractionChanged: (value) => _onFractionChanged(_index, value),
       onToggleChrome: _toggleChrome,
       hasPreviousChapter: _index > 0,
@@ -650,6 +679,12 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
       selectable: _chromeVisible,
       highlight: _highlight,
       navigation: _navigation,
+      prefetchTitle: _index + 1 < _chapterCount
+          ? widget.book.chapters[_index + 1].title
+          : null,
+      prefetchText: _index + 1 < _chapterCount
+          ? _textFor(_index + 1, widget.book.chapters[_index + 1])
+          : null,
       onPreviousChapter: () {
         if (_index > 0) _goToChapter(_index - 1, toStart: false);
       },
@@ -670,9 +705,10 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
           ? inset.bottom + _kBottomBarHeight + 6
           : inset.bottom + 6,
       child: IgnorePointer(
-        child: ValueListenableBuilder<double>(
-          valueListenable: _fraction,
-          builder: (context, fraction, _) {
+        child: ValueListenableBuilder<int>(
+          valueListenable: _chapterPercent,
+          builder: (context, percent, _) {
+            final fraction = percent / 100.0;
             final overall = _chapterCount == 0
                 ? 0.0
                 : ((_index + fraction) / _chapterCount).clamp(0.0, 1.0);
@@ -816,9 +852,10 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
                       ],
                     ),
                   ),
-                  ValueListenableBuilder<double>(
-                    valueListenable: _fraction,
-                    builder: (context, fraction, _) {
+                  ValueListenableBuilder<int>(
+                    valueListenable: _chapterPercent,
+                    builder: (context, _, _) {
+                      final fraction = _preciseFraction;
                       final marked =
                           _library?.bookmarkNear(
                             widget.book.id,
@@ -891,9 +928,10 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
                       onTap: _index > 0 ? () => _goToChapter(_index - 1) : null,
                     ),
                     Expanded(
-                      child: ValueListenableBuilder<double>(
-                        valueListenable: _fraction,
-                        builder: (context, fraction, _) {
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: _chapterPercent,
+                        builder: (context, percent, _) {
+                          final fraction = percent / 100.0;
                           final overall = _chapterCount == 0
                               ? 0.0
                               : ((_index + fraction) / _chapterCount).clamp(
@@ -949,9 +987,10 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen>
                   ],
                 ),
               ),
-              ValueListenableBuilder<double>(
-                valueListenable: _fraction,
-                builder: (context, fraction, _) {
+              ValueListenableBuilder<int>(
+                valueListenable: _chapterPercent,
+                builder: (context, percent, _) {
+                  final fraction = percent / 100.0;
                   final overall = _chapterCount == 0
                       ? 0.0
                       : ((_index + fraction) / _chapterCount).clamp(0.0, 1.0);
